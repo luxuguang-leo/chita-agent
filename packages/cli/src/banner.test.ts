@@ -1,13 +1,15 @@
 /**
- * banner tests — cheetah logo renders + info columns align.
+ * banner tests — running cheetah logo renders + info columns align.
  */
 
 import { test, expect } from "bun:test";
 import { renderBanner, CHITA_LOGO } from "./banner.ts";
 
-test("logo: all lines equal width (monospace-safe)", () => {
+test("logo: all lines monospace-safe, bounded width", () => {
   const widths = CHITA_LOGO.map((l) => l.length);
-  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(2);
+  // compact logo: widest line ~ 25 chars
+  expect(Math.max(...widths)).toBeLessThanOrEqual(30);
+  expect(Math.min(...widths)).toBeGreaterThan(5);
 });
 
 test("banner: contains version, model, cwd", () => {
@@ -17,10 +19,11 @@ test("banner: contains version, model, cwd", () => {
   expect(out).toContain("cwd    ~");
 });
 
-test("banner: tear-streak cheetah marks present", () => {
-  // the logo has the tear-streak mouth region (___/_____\___)
-  expect(CHITA_LOGO.join("\n")).toContain("\\");
-  expect(CHITA_LOGO.join("\n")).toContain("/");
+test("banner: cheetah spots present (o/O/0)", () => {
+  const art = CHITA_LOGO.join("\n");
+  expect(art).toMatch(/[oO0]/);
+  // streamlines: head curve + tail
+  expect(art).toContain("/ \\_,");
 });
 
 test("banner: task info truncated to 40 chars", () => {

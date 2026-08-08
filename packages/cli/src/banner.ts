@@ -1,12 +1,11 @@
 /**
- * chita startup banner — cheetah-face ASCII logo with the signature
- * tear-streak lines (the species' most distinctive mark: black lines from
- * the inner eye corners down to the mouth).
+ * chita startup banner — running cheetah ASCII logo with spots.
  *
- * All characters are monospace-safe ASCII/box-drawing — no width-varying
- * glyphs — so the logo aligns on any terminal.
+ * Based on the classic cheetah ASCII art (ascii.co.uk, atc variant):
+ * streamlined head, o/O/0 spots, arched back, tail. Rendered as a compact
+ * 12-line logo. All monospace-safe.
  *
- * Layout mirrors the reference launch banner: logo left, session info right
+ * Layout mirrors the reference launch banner: logo left, info right
  * (version / model / cwd aligned columns).
  */
 
@@ -18,26 +17,22 @@ export interface BannerInfo {
 }
 
 export const CHITA_LOGO = [
-  "        ___________  ",
-  "     __/___________\\__",
-  "     /_   __   __   _\\",
-  "    / /  /__\\ /__\\  \\ \\",
-  "    | |   ~~   ~~   | |",
-  "    | |_____________| |",
-  "    |/   \\_______/   \\|",
-  "    |\\___/_______\\___/|",
-  "    |    ||     ||    |",
-  "     \\___||_____||___/",
+  "       _",
+  "      / \\_,",
+  "     !   `  `-._",
+  "  ___/i._\\ }_/-'`-,",
+  " '      //  ---//-'",
+  "       /       /'",
+  "     ,'o O o 0,'-.",
+  "    :'o O 0/ 0 )__,",
+  "    /o 0 0(),| o/-'",
+  "    |`,,'  `._/0|\\',",
+  "    |O|  `._/ \\o'||o",
+  "     \\|    `._)  /(",
 ] as const;
 
 /**
  * Render the banner: logo left, info right, aligned columns.
- * ```
- *          ___________          chita v0.1.0
- *       __/___________\\__      model  deepseek-v4-flash
- *      /_   __   __   _\\       cwd    ~
- *      ...
- * ```
  */
 export function renderBanner(info: BannerInfo): string {
   const lines: string[] = [];
