@@ -7,3 +7,6 @@ dist/
 
 # eval fixture 运行时生成的 git 历史（build-env.ts 产物）
 evals/cases/*/env/.git/
+
+# eval agent artifacts (generated during --run)
+evals/cases/*/env/answer.json

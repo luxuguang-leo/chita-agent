@@ -130,7 +130,7 @@ export interface ContextTruncatedEvent extends TraceEventBase {
 export interface ErrorEvent extends TraceEventBase {
   type: "error";
   /** Error category: 4xx no-retry / 5xx+429 backoff / overflow / malformed */
-  category: "auth" | "rate_limit" | "server" | "overflow" | "malformed" | "other";
+  category: "auth" | "rate_limit" | "server" | "timeout" | "overflow" | "malformed" | "other";
   /** Whether retrying makes sense (4xx no, 5xx/429 yes) */
   retryable: boolean;
   message: string;

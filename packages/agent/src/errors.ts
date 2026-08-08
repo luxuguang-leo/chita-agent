@@ -64,7 +64,7 @@ export function classifyError(status: number | undefined, message: string): Clas
   if (m.includes("overflow") || m.includes("context length") || m.includes("token limit")) {
     return { category: "overflow", retryable: true, reason: "context overflow — compact then retry" };
   }
-  if (m.includes("timeout") || m.includes("timed out") || m.includes("econnreset") || m.includes("socket hang")) {
+  if (m.includes("timeout") || m.includes("timed out") || m.includes("econnreset") || m.includes("socket hang") || m.includes("connection refused") || m.includes("network")) {
     return { category: "timeout", retryable: true, reason: "timeout/network", backoffMs: 1500 };
   }
   if (m.includes("malformed") || m.includes("invalid json") || m.includes("schema") || m.includes("arguments")) {

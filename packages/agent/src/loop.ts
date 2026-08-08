@@ -18,6 +18,7 @@ import { ToolRegistry, ToolContext, ToolResult } from "../../tools/src/index.ts"
 import { registerBuiltinTools } from "../../tools/src/builtin.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
 import { ContextManager } from "./context.ts";
+import { classifyError } from "./errors.ts";
 
 export type LoopState = "IDLE" | "THINKING" | "TOOL_CALL" | "OBSERVING" | "DONE" | "ERROR" | "CANCELLED" | "WAITING_USER";
 
@@ -173,35 +174,74 @@ export class AgentLoop {
         description: t.description,
         parameters: t.parameters,
       }));
-      for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined, tools: chatTools })) {
-        if (ev.kind === "message" && ev.message) {
-          this.messages.push(ev.message);
-          this.opts.hooks?.onAssistantMessage?.(ev.message);
-        } else if (ev.kind === "tool_call" && ev.toolName) {
-          this.state = "TOOL_CALL";
-          const result = await this.runTool(ev.toolName, ev.args ?? {});
-          this.state = "OBSERVING";
-          // tool result back to the model as a tool message (OpenAI requires
-          // tool_call_id referencing the original tool_calls)
-          this.messages.push({
-            role: "tool",
-            name: ev.toolName,
-            toolCallId: ev.callId,
-            content: result.ok ? (result.output ?? "") : `ERROR: ${result.error ?? ""}`,
-          });
-          // done tool hard gate (v2.1 §2.2): a SUCCESSFUL done tool call
-          // transitions to DONE — regardless of Provider event kind.
-          if (ev.toolName === "done" && result.ok) {
-            gotDone = true;
-            summary = String(ev.args?.summary ?? "");
-            break;
+
+      // Provider call with overflow recovery (v2.1 §2.4, Cursor F4):
+      // context overflow -> compact -> retry; >3 overflows -> terminate
+      let turnDone = false;
+      while (!turnDone) {
+        try {
+          for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined, tools: chatTools })) {
+            if (ev.kind === "message" && ev.message) {
+              this.messages.push(ev.message);
+              this.opts.hooks?.onAssistantMessage?.(ev.message);
+            } else if (ev.kind === "tool_call" && ev.toolName) {
+              this.state = "TOOL_CALL";
+              const result = await this.runTool(ev.toolName, ev.args ?? {});
+              this.state = "OBSERVING";
+              // tool result back to the model as a tool message (OpenAI requires
+              // tool_call_id referencing the original tool_calls)
+              this.messages.push({
+                role: "tool",
+                name: ev.toolName,
+                toolCallId: ev.callId,
+                content: result.ok ? (result.output ?? "") : `ERROR: ${result.error ?? ""}`,
+              });
+              // done tool hard gate (v2.1 §2.2): a SUCCESSFUL done tool call
+              // transitions to DONE — regardless of Provider event kind.
+              if (ev.toolName === "done" && result.ok) {
+                gotDone = true;
+                summary = String(ev.args?.summary ?? "");
+                break;
+              }
+            } else if (ev.kind === "done") {
+              gotDone = true;
+              summary = ev.summary;
+              break;
+            }
+            if (ev.usage?.tokens) this.tokensUsed += ev.usage.tokens;
           }
-        } else if (ev.kind === "done") {
-          gotDone = true;
-          summary = ev.summary;
-          break;
+          turnDone = true;
+        } catch (e) {
+          // Classify: only context overflow triggers compact+retry
+          const msg = e instanceof Error ? e.message : String(e);
+          const classified = classifyError(undefined, msg);
+          if (classified.category === "overflow") {
+            const { shouldTerminate } = this.contextManager.overflowRecovery();
+            if (shouldTerminate) {
+              this.state = "ERROR";
+              return { state: this.state };
+            }
+            // compact then retry the same turn
+            const { messages: compacted, report } = this.contextManager.compact(this.messages);
+            if (report.truncated) {
+              this.messages = compacted;
+              this.messages.push({ role: "system", content: report.note ?? "" });
+            }
+            continue;
+          }
+          // Other errors: report and stop (M2 scope; retry/backoff is M4)
+          this.state = "ERROR";
+          this.opts.hooks?.onEvent?.({
+            seq: this.iterations,
+            type: "error",
+            category: classified.category,
+            retryable: classified.retryable,
+            message: msg,
+            faultSide: "env",
+            ts: new Date().toISOString(),
+          });
+          return { state: this.state };
         }
-        if (ev.usage?.tokens) this.tokensUsed += ev.usage.tokens;
       }
 
       this.iterations++;

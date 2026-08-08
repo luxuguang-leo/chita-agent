@@ -1,5 +1,6 @@
+// Intentionally buggy: negative-number handling is wrong
 export function add(a, b) {
-  return a + b;
+  return a + Math.abs(b);
 }
 
 // Self-test entry
