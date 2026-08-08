@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from "bun:test";
-import { AgentLoop, Provider, StreamEvent, ChatMessage } from "./loop.ts";
+import { AgentLoop, Provider, StreamEvent, ChatMessage, LoopState } from "./loop.ts";
 import { scrubSecrets } from "./scrub.ts";
 
 class FakeProvider implements Provider {
@@ -85,38 +85,38 @@ test("afterToolCall hook scrubs output before model sees it", async () => {
 
 test("onSessionEnd fires on DONE", async () => {
   const script: StreamEvent[][] = [[{ kind: "done", summary: "finished" }]];
-  let ended: { state: string; summary?: string } | null = null;
+  const ended: { state: string; summary?: string }[] = [];
   const loop = new AgentLoop({
     cwd: "/tmp",
     provider: new FakeProvider(script),
     hooks: {
       beforeToolCall: async () => true,
-      onSessionEnd: (state, summary) => {
-        ended = { state, summary };
+      onSessionEnd: (state: LoopState, summary?: string) => {
+        ended.push({ state, summary });
       },
     },
   });
   await loop.run("task");
-  expect(ended?.state).toBe("DONE");
-  expect(ended?.summary).toBe("finished");
+  expect(ended[0]?.state).toBe("DONE");
+  expect(ended[0]?.summary).toBe("finished");
 });
 
 test("onSessionEnd fires on ERROR (maxIterations)", async () => {
   const script: StreamEvent[][] = [
     [{ kind: "message", message: { role: "assistant", content: "never done" } }],
   ];
-  let endedState: string | null = null;
+  const endedStates: string[] = [];
   const loop = new AgentLoop({
     cwd: "/tmp",
     provider: new FakeProvider(script),
     maxIterations: 2,
     hooks: {
       beforeToolCall: async () => true,
-      onSessionEnd: (state) => {
-        endedState = state;
+      onSessionEnd: (state: LoopState) => {
+        endedStates.push(state);
       },
     },
   });
   await loop.run("task");
-  expect(endedState).toBe("ERROR");
+  expect(endedStates[0]).toBe("ERROR");
 });
