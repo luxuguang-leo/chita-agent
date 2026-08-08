@@ -11,3 +11,4 @@ evals/cases/*/env/.git/
 # eval agent artifacts (generated during --run)
 evals/cases/*/env/answer.json
 .hermes-agent-bridge
+agent-bridge

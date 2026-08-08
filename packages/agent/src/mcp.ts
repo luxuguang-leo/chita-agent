@@ -69,18 +69,26 @@ export async function connectMcp(cfg: McpServerConfig): Promise<McpHandle> {
   };
 }
 
-/** Convenience: register all MCP tools into a registry. */
+/** Convenience: register all MCP tools into a registry.
+ *  If a later server fails to connect, already-connected handles are closed
+ *  (no leak, Cursor F3). */
 export async function attachMcpServers(
   cfgs: McpServerConfig[],
   registry: { register(t: Tool): void }
 ): Promise<McpHandle[]> {
   const handles: McpHandle[] = [];
-  for (const cfg of cfgs) {
-    const handle = await connectMcp(cfg);
-    for (const t of handle.tools) registry.register(t);
-    handles.push(handle);
+  try {
+    for (const cfg of cfgs) {
+      const handle = await connectMcp(cfg);
+      for (const t of handle.tools) registry.register(t);
+      handles.push(handle);
+    }
+    return handles;
+  } catch (e) {
+    // close everything already connected before rethrowing
+    await Promise.allSettled(handles.map((h) => h.close()));
+    throw e;
   }
-  return handles;
 }
 
 /**

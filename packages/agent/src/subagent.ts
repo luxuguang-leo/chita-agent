@@ -77,28 +77,40 @@ export async function runSubagent(
     return { ok: false, summary: "", error: `subagent did not finish (${outcome.state})` };
   }
 
-  // Evidence contract: summary must be non-empty; verificationHint optional but
-  // encouraged (the parent runs it to confirm)
+  // Evidence contract (Cursor F2): summary + a concrete verification command
+  // are both required for ok:true — a bare summary is not enough to claim
+  // completion (NOOA: premature termination is the #1 failure mode).
   const summary = outcome.summary ?? "";
   if (!summary.trim()) {
     return { ok: false, summary: "", error: "subagent finished without a summary (evidence contract)" };
+  }
+  const verificationHint = suggestVerification(task);
+  if (!verificationHint) {
+    return {
+      ok: false,
+      summary,
+      error: "subagent finished but produced no verification hint (evidence contract)",
+    };
   }
 
   return {
     ok: true,
     summary,
-    verificationHint: suggestVerification(task),
+    verificationHint,
   };
 }
 
 /**
- * Heuristic verification hint: if the task mentions running tests, suggest it;
- * otherwise a generic "inspect the reported files" hint. M3 deterministic;
- * LLM-generated hints land later.
+ * Heuristic verification hint: derive a concrete verifiable command from the
+ * task. M3 deterministic; returns null when nothing verifiable is derivable
+ * (in which case the evidence contract fails, pushing the caller to give the
+ * subagent a testable instruction).
  */
 function suggestVerification(task: SubagentTask): string | undefined {
   const t = task.instruction.toLowerCase();
   if (t.includes("test") || t.includes("verify")) return "run the test suite mentioned in the task";
+  // generic: re-run the reported command with --dry-run? Not verifiable — return
+  // undefined so the contract forces a testable task.
   return undefined;
 }
 

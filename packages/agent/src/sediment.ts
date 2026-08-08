@@ -10,7 +10,7 @@
  * land in ~/.chita/skills-pending/ with a review marker.
  */
 
-import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { TraceEvent } from "../../session/src/trace.ts";
 
@@ -69,13 +69,18 @@ export function listPendingSkills(): string[] {
 /**
  * Activate a pending skill: move it into the active skills dir (review passed).
  * M3: explicit review — this is the "human approves" step.
+ * Removes the pending copy and flips status: pending -> active (Cursor F4).
  */
 export function activateSkill(name: string): string {
   const pending = join(PENDING_SKILLS_DIR, name, "SKILL.md");
   if (!existsSync(pending)) throw new Error(`pending skill not found: ${name}`);
   mkdirSync(join(SKILLS_DIR, name), { recursive: true });
   const dest = join(SKILLS_DIR, name, "SKILL.md");
-  writeFileSync(dest, readFileSync(pending, "utf-8"));
+  let content = readFileSync(pending, "utf-8");
+  content = content.replace(/^status: pending$/m, "status: active");
+  writeFileSync(dest, content);
+  // remove the pending copy (reviewed and activated)
+  rmSync(join(PENDING_SKILLS_DIR, name), { recursive: true, force: true });
   return dest;
 }
 

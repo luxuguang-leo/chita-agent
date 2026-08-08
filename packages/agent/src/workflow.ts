@@ -56,9 +56,10 @@ export async function runWorkflow(
   for (const stage of stages) {
     const maxRetries = stage.maxRetries ?? DEFAULT_RETRIES;
     let attempts = 0;
+    let stageOk = false;
     let lastOutcome: { state: string; summary?: string } | null = null;
 
-    while (attempts <= maxRetries) {
+    while (attempts <= maxRetries && !stageOk) {
       attempts++;
       const loop = new AgentLoop({
         cwd: opts.cwd,
@@ -71,6 +72,7 @@ export async function runWorkflow(
       lastOutcome = await loop.run(stage.task);
 
       if (lastOutcome.state === "DONE") {
+        stageOk = true;
         results.push({
           name: stage.name,
           ok: true,
@@ -86,7 +88,9 @@ export async function runWorkflow(
       }
     }
 
-    if (!results[results.length - 1]?.ok) {
+    // local flag, not results[-1] — a previous stage's success must NOT mask
+    // this stage's failure (Cursor F1)
+    if (!stageOk) {
       results.push({
         name: stage.name,
         ok: false,

@@ -74,6 +74,9 @@ test("writePendingSkill + listPendingSkills + activateSkill", () => {
   const active = activateSkill("review-me");
   expect(existsSync(active)).toBe(true);
   expect(readFileSync(active, "utf-8")).toContain("name: review-me");
+  // status flipped to active, pending copy removed (Cursor F4)
+  expect(readFileSync(active, "utf-8")).toContain("status: active");
+  expect(existsSync(join(PENDING_SKILLS_DIR, "review-me"))).toBe(false);
 });
 
 test("suggestFromTrace: >=3 tools all-ok suggests; failures don't", () => {

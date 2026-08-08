@@ -87,6 +87,35 @@ test("workflow: retries exhausted -> stage fails", async () => {
   expect(result.stages[0].attempts).toBe(2); // 1 initial + 1 retry (maxRetries=1)
 });
 
+test("workflow: mid-workflow stage failure stops (Cursor F1)", async () => {
+  // Stage 1 succeeds, stage 2 exhausts retries -> stop, record stage 2 failure,
+  // stage 3 must NOT run
+  const stages: WorkflowStage[] = [
+    { name: "ok1", task: "succeeds" },
+    { name: "bad2", task: "exhausts", maxRetries: 1 },
+    { name: "never3", task: "should not run" },
+  ];
+  // Provider: succeeds on first call (stage1), then always stalls (stage2+)
+  let calls = 0;
+  const provider: Provider = {
+    async *chat(_m: ChatMessage[]): AsyncIterable<StreamEvent> {
+      calls++;
+      await new Promise((r) => setTimeout(r, 1));
+      if (calls === 1) {
+        yield { kind: "done", summary: "stage 1 ok" };
+        return;
+      }
+      yield { kind: "message", message: { role: "assistant", content: "stalled" } };
+    },
+  };
+  const result = await runWorkflow("wf", stages, { cwd: "/tmp", provider, backoffMs: 1 });
+  expect(result.allOk).toBe(false);
+  expect(result.stages.length).toBe(2); // ok1 + bad2
+  expect(result.stages[0].ok).toBe(true);
+  expect(result.stages[1].ok).toBe(false);
+  expect(result.stages[1].error).toContain("failed after 2 attempts");
+});
+
 test("specPipeline: implement -> verify -> finalize template", () => {
   const stages = specPipeline({ spec: "add a login page", verifyCommand: "npm test" });
   expect(stages.map((s) => s.name)).toEqual(["implement", "verify", "finalize"]);

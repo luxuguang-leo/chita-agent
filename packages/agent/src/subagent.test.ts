@@ -31,7 +31,7 @@ function factory(summary: string, log: string[]): SubagentProviderFactory {
 test("subagent: returns TaskResult with summary on DONE", async () => {
   const log: string[] = [];
   const result = await runSubagent(
-    { instruction: "investigate the bug", cwd: "/tmp" },
+    { instruction: "investigate the bug and run the tests", cwd: "/tmp" },
     factory("found the root cause", log)
   );
   expect(result?.ok).toBe(true);
@@ -40,14 +40,14 @@ test("subagent: returns TaskResult with summary on DONE", async () => {
 
 test("subagent: default tier is cheap (cost control)", async () => {
   const log: string[] = [];
-  await runSubagent({ instruction: "do something", cwd: "/tmp" }, factory("done", log));
+  await runSubagent({ instruction: "do something and run the tests", cwd: "/tmp" }, factory("done", log));
   expect(log).toEqual(["cheap"]);
 });
 
 test("subagent: explicit main tier routes to main provider", async () => {
   const log: string[] = [];
   await runSubagent(
-    { instruction: "do something", cwd: "/tmp", modelTier: "main" },
+    { instruction: "do something and run the tests", cwd: "/tmp", modelTier: "main" },
     factory("done", log)
   );
   expect(log).toEqual(["main"]);
@@ -82,4 +82,14 @@ test("tieredProviderFactory: routes main/cheap correctly", () => {
   const f = tieredProviderFactory(main, cheap);
   expect(f.makeProvider("main")).toBeDefined();
   expect(f.makeProvider("cheap")).toBeDefined();
+});
+
+test("subagent: evidence contract fails without verification hint", async () => {
+  // Task with no test/verify keyword -> no hint derivable -> ok:false
+  const result = await runSubagent(
+    { instruction: "just describe the code", cwd: "/tmp" },
+    factory("described", [])
+  );
+  expect(result?.ok).toBe(false);
+  expect(result?.error).toContain("verification hint");
 });
