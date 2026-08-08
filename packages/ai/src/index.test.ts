@@ -52,11 +52,11 @@ test("toOpenAIMessages maps roles correctly", () => {
   const msgs: ChatMessage[] = [
     { role: "user", content: "hi" },
     { role: "assistant", content: "hello" },
-    { role: "tool", name: "read", content: "file content" },
+    { role: "tool", name: "read", toolCallId: "call_123", content: "file content" },
   ];
   const out = toOpenAIMessages(msgs);
   expect(out[0]).toEqual({ role: "user", content: "hi" });
-  expect(out[2]).toEqual({ role: "tool", tool_call_id: "read", content: "file content" });
+  expect(out[2]).toEqual({ role: "tool", tool_call_id: "call_123", content: "file content" });
 });
 
 test("streams assistant text as message events", async () => {
@@ -116,11 +116,10 @@ test("tool_calls accumulate deltas and parse args", async () => {
     expect(toolCall!.toolName).toBe("read");
     expect(toolCall!.args).toEqual({ path: "src/main.js" });
 
+    // No done event after tool calls — the loop runs the tool and continues
+    // (fix: usage after tool_calls must not emit done, or the toolchain dies)
     const doneEvent = events.find((e) => e.kind === "done");
-    expect(doneEvent).toBeDefined();
-    expect(doneEvent!.usage?.tokens).toBe(42);
-    // done must come AFTER tool_call
-    expect(events.indexOf(doneEvent!)).toBeGreaterThan(events.indexOf(toolCall!));
+    expect(doneEvent).toBeUndefined();
   } finally {
     stop();
   }

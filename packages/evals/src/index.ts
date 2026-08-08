@@ -84,8 +84,9 @@ export async function runEvals(opts: RunOptions): Promise<EvalResult[]> {
 
   for (const c of cases) {
     if (opts.provider) {
+      // Agent cwd = case root (instruction paths reference env/...), not env/ itself
       const loop = new AgentLoop({
-        cwd: join(c.dir, "env"),
+        cwd: c.dir,
         provider: opts.provider,
         maxIterations: opts.maxIterations ?? 20,
         autoApproveAsk: true, // eval runs are sandboxed fixtures — allow write/bash

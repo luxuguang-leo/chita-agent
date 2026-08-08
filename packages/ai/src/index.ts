@@ -9,7 +9,7 @@
  *   message / tool_call / tool_result / done (+ usage)
  */
 
-import type { ChatMessage, StreamEvent } from "../../agent/src/loop.ts";
+import type { ChatMessage, StreamEvent, ChatTool } from "../../agent/src/loop.ts";
 
 export interface ProviderConfig {
   /** Base URL of an OpenAI-compatible endpoint */
@@ -42,9 +42,18 @@ export interface OpenAIStreamChunk {
 export function toOpenAIMessages(messages: ChatMessage[]): Record<string, unknown>[] {
   return messages.map((m) => {
     if (m.role === "tool") {
-      return { role: "tool", tool_call_id: m.name ?? "", content: m.content };
+      return { role: "tool", tool_call_id: m.toolCallId ?? "", content: m.content };
     }
-    return { role: m.role, content: m.content };
+    const base: Record<string, unknown> = { role: m.role, content: m.content };
+    // assistant tool_calls declaration -> OpenAI tool_calls array
+    if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+      base.tool_calls = m.toolCalls.map((tc) => ({
+        id: tc.id,
+        type: "function",
+        function: { name: tc.name, arguments: tc.args },
+      }));
+    }
+    return base;
   });
 }
 
@@ -59,13 +68,21 @@ export class OpenAICompatibleProvider {
    * Stream chat completions from an OpenAI-compatible endpoint.
    * Yields: message (assistant text), tool_call, done, usage.
    */
-  async *chat(messages: ChatMessage[], opts?: { signal?: AbortSignal }): AsyncIterable<StreamEvent> {
-    const body = {
+  async *chat(messages: ChatMessage[], opts?: { signal?: AbortSignal; tools?: ChatTool[] }): AsyncIterable<StreamEvent> {
+    const body: Record<string, unknown> = {
       model: this.cfg.model,
       messages: toOpenAIMessages(messages),
       stream: true,
       max_tokens: this.cfg.maxTokens ?? 4096,
     };
+    // Tools as OpenAI function-calling format (DeepSeek/Kimi/GLM/Ollama all support it)
+    if (opts?.tools && opts.tools.length > 0) {
+      body.tools = opts.tools.map((t) => ({
+        type: "function",
+        function: { name: t.name, description: t.description, parameters: t.parameters },
+      }));
+      body.tool_choice = "auto";
+    }
 
     const res = await fetch(`${this.cfg.baseUrl}/chat/completions`, {
       method: "POST",
@@ -139,25 +156,45 @@ export class OpenAICompatibleProvider {
     }
 
     // Emit tool calls after the stream completes (assistant finished, tool calls requested)
-    for (const tc of toolCalls.values()) {
-      if (tc.name) {
-        let args: Record<string, unknown> = {};
-        try {
-          args = tc.args ? (JSON.parse(tc.args) as Record<string, unknown>) : {};
-        } catch {
-          // malformed args: pass raw string; loop/registry will surface it
+    if (toolCalls.size > 0) {
+      // 1) the assistant message declaring tool_calls (OpenAI requires it in
+      //    the conversation before the tool results reference call ids)
+      const declared = [...toolCalls.values()].map((tc) => ({
+        id: tc.id,
+        name: tc.name,
+        args: tc.args,
+      }));
+      if (assistantContent || declared.length > 0) {
+        yield {
+          kind: "message",
+          message: { role: "assistant", content: assistantContent, toolCalls: declared },
+        };
+      }
+      // 2) per-call events for the loop to execute
+      for (const tc of toolCalls.values()) {
+        if (tc.name) {
+          let args: Record<string, unknown> = {};
+          try {
+            args = tc.args ? (JSON.parse(tc.args) as Record<string, unknown>) : {};
+          } catch {
+            // malformed args: pass raw string; loop/registry will surface it
+          }
+          yield { kind: "tool_call", toolName: tc.name, args, callId: tc.id };
         }
-        yield { kind: "tool_call", toolName: tc.name, args };
       }
     }
-
-    // Final: usage / done event (after all tool calls — loop runs tools then continues)
-    if (usage) {
-      yield { kind: "done", summary: assistantContent, usage: { tokens: usage.total_tokens } };
-    } else if (toolCalls.size === 0) {
-      // Stream ended without [DONE] and no tool calls: plain final message.
-      // The loop's done-hard-gate injects the gate note.
-      return;
+    // Final: emit done ONLY when there were no tool calls. If the model
+    // requested tools, the loop executes them and feeds results back for the
+    // next turn — emitting done here would terminate mid-toolchain (real
+    // DeepSeek run exposed this: tool result never reached the model).
+    if (toolCalls.size === 0) {
+      if (usage) {
+        yield { kind: "done", summary: assistantContent, usage: { tokens: usage.total_tokens } };
+      } else {
+        // Stream ended without [DONE] and no tool calls: plain final message.
+        // The loop's done-hard-gate injects the gate note.
+        return;
+      }
     }
   }
 }

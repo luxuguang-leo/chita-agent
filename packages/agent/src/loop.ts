@@ -27,6 +27,10 @@ export interface ChatMessage {
   content: string;
   /** Tool call name (role=tool) */
   name?: string;
+  /** Tool call id (role=tool; OpenAI requires tool_call_id for tool messages) */
+  toolCallId?: string;
+  /** Tool calls declared by the assistant (OpenAI assistant message structure) */
+  toolCalls?: { id: string; name: string; args: string }[];
 }
 
 export interface StreamEvent {
@@ -34,13 +38,24 @@ export interface StreamEvent {
   message?: ChatMessage;
   toolName?: string;
   args?: Record<string, unknown>;
+  /** Tool call id (OpenAI tool_call_id; required when feeding results back) */
+  callId?: string;
   result?: { ok: boolean; output?: string; error?: string };
   summary?: string;
   usage?: { tokens: number };
 }
 
+export interface ChatTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
 export interface Provider {
-  chat(messages: ChatMessage[], opts?: { signal?: AbortSignal }): AsyncIterable<StreamEvent>;
+  chat(
+    messages: ChatMessage[],
+    opts?: { signal?: AbortSignal; tools?: ChatTool[] }
+  ): AsyncIterable<StreamEvent>;
 }
 
 export interface LoopHooks {
@@ -152,7 +167,13 @@ export class AgentLoop {
         this.contextManager.resetOverflow();
       }
 
-      for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined })) {
+      // Expose registered tools to the provider so the model can call them
+      const chatTools: ChatTool[] = this.tools.list().map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      }));
+      for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined, tools: chatTools })) {
         if (ev.kind === "message" && ev.message) {
           this.messages.push(ev.message);
           this.opts.hooks?.onAssistantMessage?.(ev.message);
@@ -160,10 +181,12 @@ export class AgentLoop {
           this.state = "TOOL_CALL";
           const result = await this.runTool(ev.toolName, ev.args ?? {});
           this.state = "OBSERVING";
-          // tool result back to the model as a tool message
+          // tool result back to the model as a tool message (OpenAI requires
+          // tool_call_id referencing the original tool_calls)
           this.messages.push({
             role: "tool",
             name: ev.toolName,
+            toolCallId: ev.callId,
             content: result.ok ? (result.output ?? "") : `ERROR: ${result.error ?? ""}`,
           });
           // done tool hard gate (v2.1 §2.2): a SUCCESSFUL done tool call

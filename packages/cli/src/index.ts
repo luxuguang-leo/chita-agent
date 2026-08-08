@@ -1,16 +1,20 @@
 /**
- * chita CLI entry (M0 version)
+ * chita CLI (M2 version)
  *
- * Subcommands (M0 scope):
+ * Subcommands:
  *   chita --version        print version
  *   chita init             generate ~/.chita/config.json
- *   chita "task"           --print mode placeholder (implemented in M1)
- *   chita --resume         session resume placeholder (implemented in M1)
+ *   chita "task"           run the task through the agent loop (--print mode)
+ *   chita --plan "task"    read-only analysis (plan mode)
+ *   chita --resume         session resume (M1.5+; placeholder)
  */
 
 import { loadConfig, initConfig, apiKey, CONFIG_PATH } from "./config.ts";
+import { AgentLoop } from "@chita/agent/src/loop.ts";
+import { OpenAICompatibleProvider } from "@chita/ai/src/index.ts";
+import { scrubSecrets } from "@chita/agent/src/scrub.ts";
 
-export const VERSION = "0.0.0";
+export const VERSION = "0.1.0";
 
 function printVersion(): void {
   console.log(`chita ${VERSION}`);
@@ -25,13 +29,41 @@ function runInit(): void {
   );
 }
 
-async function printMode(task: string): Promise<void> {
+async function runAgent(task: string, opts: { plan?: boolean }): Promise<void> {
   const cfg = loadConfig();
   const key = apiKey();
-  console.log(`[chita --print] task: ${task}`);
-  console.log(`  provider=${cfg.provider} model=${cfg.model}`);
-  console.log(key ? "  api key: ok (env)" : "  api key: missing CHITA_API_KEY");
-  console.log("  [M0 placeholder] agent loop lands in M1");
+  if (!key) {
+    console.error("CHITA_API_KEY is not set (required to run tasks)");
+    process.exit(1);
+  }
+
+  const provider = new OpenAICompatibleProvider({
+    baseUrl: `https://api.deepseek.com/v1`,
+    apiKey: key,
+    model: cfg.model,
+  });
+
+  const loop = new AgentLoop({
+    cwd: process.cwd(),
+    provider,
+    mode: opts.plan ? "plan" : "build",
+    autoApproveAsk: true, // --print dev mode (v2.1 §2.3)
+    hooks: {
+      beforeToolCall: async () => true,
+      // scrub tool output before it reaches the model (v2.1 F4)
+      afterToolCall: (_name, result) => {
+        if (result.output) {
+          const scrubbed = scrubSecrets(result.output);
+          return { ok: result.ok, output: scrubbed.text };
+        }
+      },
+    },
+  });
+
+  console.log(`[chita ${opts.plan ? "plan" : "build"}] ${task}`);
+  const outcome = await loop.run(task);
+  console.log(`\n[chita] state: ${outcome.state}${outcome.summary ? ` | ${outcome.summary}` : ""}`);
+  if (outcome.state !== "DONE") process.exitCode = 1;
 }
 
 async function main(): Promise<void> {
@@ -45,9 +77,11 @@ async function main(): Promise<void> {
         "Usage:",
         "  chita --version          print version",
         "  chita init               generate ~/.chita/config.json",
-        '  chita "task"             --print mode (M1)',
-        "  chita --resume           resume session (M1)",
+        '  chita "task"             run a task (--print mode)',
+        '  chita --plan "task"      read-only analysis (plan mode)',
+        "  chita --resume           resume session (M2+)",
         "",
+        "Env: CHITA_API_KEY required for running tasks",
       ].join("\n")
     );
     return;
@@ -56,10 +90,14 @@ async function main(): Promise<void> {
   if (args.includes("--version")) return printVersion();
   if (args[0] === "init") return runInit();
   if (args[0] === "--resume") {
-    console.log("[M0 placeholder] --resume lands in M1");
+    console.log("[chita] --resume lands in M2+");
     return;
   }
-  await printMode(args.join(" "));
+  if (args[0] === "--plan") {
+    await runAgent(args.slice(1).join(" "), { plan: true });
+    return;
+  }
+  await runAgent(args.join(" "), { plan: false });
 }
 
 main().catch((e) => {
