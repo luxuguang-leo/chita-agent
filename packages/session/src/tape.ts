@@ -42,6 +42,11 @@ export class Tape {
   private seq = 0;
   private locked = false;
   private root: string;
+
+  /** Sessions root this tape lives under (for reopen after rewrite) */
+  get sessionsRoot(): string {
+    return this.root;
+  }
   private lockPath: string | null = null;
   private lockFd: number | null = null;
 
@@ -135,15 +140,21 @@ export class Tape {
     return events;
   }
 
-  /** Fork: copy the tape prefix to a new session file (source untouched, v2.1 §2.7) */
+  /** Fork: copy the tape prefix to a new session file (source untouched, v2.1 §2.7).
+   *  The parent's __meta header line is NOT copied — the child writes its own
+   *  meta (parentId + branchSummary) via forkWithSummary. */
   fork(newSessionId: string): Tape {
-    const content = existsSync(this.paths.tape) ? readFileSync(this.paths.tape, "utf-8") : "";
-    // cwd comes from the tape meta header (authoritative), not path decoding
     const cwd = this.readMeta()?.cwd ?? process.cwd();
+    const content = existsSync(this.paths.tape)
+      ? readFileSync(this.paths.tape, "utf-8")
+          .split("\n")
+          .filter((l) => l.trim() && !l.includes("__meta"))
+          .join("\n")
+      : "";
     const newPaths = tapePaths(cwd, newSessionId, this.root);
     mkdirSync(newPaths.dir, { recursive: true });
     const fd = openSync(newPaths.tape, "w");
-    writeSync(fd, content);
+    if (content) writeSync(fd, content + (content.endsWith("\n") ? "" : "\n"));
     closeSync(fd);
     return Tape.open(cwd, newSessionId, this.root);
   }

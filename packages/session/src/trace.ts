@@ -163,6 +163,8 @@ export interface SessionMeta {
   createdAt: string;
   /** Parent session (fork semantics, v2.1 §2.7) */
   parentId?: string;
+  /** Why this branch was taken / what was explored (v2.1 §2.7) */
+  branchSummary?: string;
   /** Pinned resource references (MCP/Skills, v2.1 N2) */
   pinnedResources?: PinningStub[];
 }
