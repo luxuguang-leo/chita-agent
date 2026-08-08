@@ -19,6 +19,9 @@
     "packages/ai": {
       "name": "@chita/ai",
       "version": "0.0.0",
+      "dependencies": {
+        "@chita/agent": "0.0.0",
+      },
     },
     "packages/cli": {
       "name": "@chita/cli",
