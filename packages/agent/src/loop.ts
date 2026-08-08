@@ -122,8 +122,9 @@ export class AgentLoop {
       let gotDone = false;
       let summary: string | undefined;
 
-      // Context management (v2.1 §2.4): truncate before hitting the provider
-      const { messages: kept, report } = this.contextManager.truncate(this.messages);
+      // Context management (v2.1 §2.4): M1.5 uses six-section compaction
+      // (falls back to truncation when there's too little to summarize)
+      const { messages: kept, report } = this.contextManager.compact(this.messages);
       if (report.truncated) {
         this.messages = kept;
         // observability: system note to the model + trace event (v2.1 §2.4)

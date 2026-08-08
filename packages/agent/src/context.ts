@@ -12,6 +12,7 @@
  */
 
 import type { ChatMessage } from "../../agent/src/loop.ts";
+import { extractSummary, renderSummary } from "./compact.ts";
 
 export interface ContextManagerOptions {
   /** Token budget cap for the conversation (default <1M per v2.1 §2.2) */
@@ -108,6 +109,52 @@ export class ContextManager {
     return {
       messages: result,
       report: { truncated: true, droppedMessages, droppedTokens, note },
+    };
+  }
+
+  /**
+   * M1.5 compaction: replace the oldest messages with a six-section summary
+   * (Goal/Constraints/Progress/Decisions/Next/Critical) instead of dropping
+   * them. The summary keeps working context (file paths, errors) while
+   * collapsing conversational bulk. Falls back to truncate if there are too
+   * few messages to summarize (nothing but the task + summary itself).
+   */
+  compact(messages: ChatMessage[]): { messages: ChatMessage[]; report: TruncationReport } {
+    const total = estimateMessagesTokens(messages);
+    if (total <= this.threshold) {
+      return { messages, report: { truncated: false, droppedMessages: 0, droppedTokens: 0, note: null } };
+    }
+
+    // Keep: task (first user msg) + newest messages within a budget
+    // Summarize: everything in between
+    const keptCount = Math.min(8, messages.length - 2); // task + summary + newest few
+    const oldest = messages.slice(0, 1); // user task — always kept verbatim
+    const summarizeMe = messages.slice(1, Math.max(2, messages.length - keptCount));
+    const newest = messages.slice(Math.max(2, messages.length - keptCount));
+
+    if (summarizeMe.length < 2) {
+      // not enough to summarize meaningfully — fall back to truncate
+      return this.truncate(messages);
+    }
+
+    const summary = extractSummary(summarizeMe);
+    const summaryBlock = renderSummary(summary);
+
+    const result: ChatMessage[] = [
+      ...oldest,
+      { role: "system", content: summaryBlock } as ChatMessage,
+      ...newest,
+    ];
+    const droppedTokens = total - estimateMessagesTokens(result);
+    const note = `[context compacted: summarized ${summarizeMe.length} messages / saved ~${droppedTokens} tokens]`;
+    return {
+      messages: result,
+      report: {
+        truncated: true,
+        droppedMessages: summarizeMe.length,
+        droppedTokens: Math.max(0, droppedTokens),
+        note,
+      },
     };
   }
 
