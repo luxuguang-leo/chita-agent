@@ -14,11 +14,12 @@ import { AgentLoop } from "@chita/agent/src/loop.ts";
 import { OpenAICompatibleProvider } from "@chita/ai/src/index.ts";
 import { scrubSecrets } from "@chita/agent/src/scrub.ts";
 import { runJudge } from "@chita/agent/src/judge.ts";
+import { printBanner } from "./banner.ts";
 
 export const VERSION = "0.1.0";
 
 function printVersion(): void {
-  console.log(`chita ${VERSION}`);
+  printBanner({ version: VERSION }, { short: true });
 }
 
 function runInit(): void {
@@ -63,6 +64,7 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
   });
 
   console.log(`[chita ${opts.plan ? "plan" : "build"}] ${task}`);
+  printBanner({ version: VERSION, model: cfg.model, cwd: process.cwd(), task });
   const outcome = await loop.run(task);
   console.log(`\n[chita] state: ${outcome.state}${outcome.summary ? ` | ${outcome.summary}` : ""}`);
   if (outcome.state !== "DONE") process.exitCode = 1;
