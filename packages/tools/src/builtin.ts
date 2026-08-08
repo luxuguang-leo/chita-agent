@@ -6,7 +6,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { Tool, ToolContext, ToolResult, truncateOutput } from "./index.ts";
 
@@ -182,8 +182,9 @@ export const gitTool: Tool = {
     const sub = String(args.args ?? "").trim();
 
     // Read-only guard (v2.1 decision #5). Reject:
-    // - shell metacharacters (command injection via `git ${sub}`)
-    // - write subcommands (commit/push/add/rm/reset/checkout/branch -D etc.)
+    // - shell metacharacters (no shell is used — execFileSync argv, but keep
+    //   the guard for defense in depth)
+    // - write subcommands (commit/push/add/rm/reset/checkout/branch)
     if (/[;&|`$()<>]/.test(sub)) {
       return { ok: false, error: `git args contain shell metacharacters (blocked): ${sub}` };
     }
@@ -192,11 +193,11 @@ export const gitTool: Tool = {
     }
     // branch removed from M1 whitelist (Cursor F4: branch -D is destructive)
     try {
-      const out = execSync(`git ${sub}`, {
+      // argv array — no shell interpolation (Cursor residual nit: leave bash behind)
+      const out = execFileSync("git", sub.split(" "), {
         cwd: ctx.cwd,
         timeout: 10000,
         encoding: "utf-8",
-        shell: "/bin/bash",
         stdio: ["ignore", "pipe", "pipe"],
       });
       const { output, truncated } = truncateOutput(out);
