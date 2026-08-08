@@ -87,3 +87,18 @@ test("RecurrenceGate: consolidates only on recurrence", () => {
   expect(gate.observe("fact-b")).toBe(false);
   expect(gate.observe("fact-a")).toBe(true); // recurrence -> consolidate
 });
+
+test("RecurrenceGate: persists across instances (M4.5)", () => {
+  const repo = mkdtempSync(join(tmpdir(), "chita-mem-persist-"));
+  const oldHome = process.env.HOME;
+  process.env.HOME = repo;
+  try {
+    const gate1 = new RecurrenceGate(2);
+    gate1.observe("persist-fact"); // 1st
+    const gate2 = new RecurrenceGate(2); // new instance, same HOME
+    expect(gate2.observe("persist-fact")).toBe(true); // count carried over
+  } finally {
+    process.env.HOME = oldHome;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});

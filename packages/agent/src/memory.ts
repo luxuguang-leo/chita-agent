@@ -15,7 +15,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { estimateTokens } from "./context.ts";
 
 export type MemoryLayer = "memory" | "checkpoint" | "notes" | "tasks";
@@ -108,16 +108,42 @@ export function injectMemory(repoRoot: string, budgetTokens: number): MemoryInje
 
 /**
  * Write-trigger (RecMem): only consolidate MEMORY.md when a fact recurs.
- * Simple recurrence tracker: same fact seen `threshold` times -> append.
+ * Recurrence counts are PERSISTED (~/.chita/stats/recurrence.json) so the
+ * threshold survives process restarts (M4.5 hardening; was in-memory in M4).
  */
 export class RecurrenceGate {
-  private seen = new Map<string, number>();
-  constructor(private threshold = 2) {}
+  private seen: Map<string, number>;
+  private statsPath: string;
+
+  constructor(private threshold = 2) {
+    this.statsPath = `${process.env.HOME}/.chita/stats/recurrence.json`;
+    this.seen = this.load();
+  }
+
+  private load(): Map<string, number> {
+    try {
+      const raw = readFileSync(this.statsPath, "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      return new Map(Object.entries(parsed));
+    } catch {
+      return new Map();
+    }
+  }
+
+  private save(): void {
+    try {
+      mkdirSync(dirname(this.statsPath), { recursive: true });
+      writeFileSync(this.statsPath, JSON.stringify(Object.fromEntries(this.seen)));
+    } catch {
+      // best effort
+    }
+  }
 
   /** Record a fact; returns true when it should be consolidated (>= threshold). */
   observe(fact: string): boolean {
     const n = (this.seen.get(fact) ?? 0) + 1;
     this.seen.set(fact, n);
+    this.save();
     return n >= this.threshold;
   }
 }

@@ -45,10 +45,14 @@ export async function connectMcp(cfg: McpServerConfig): Promise<McpHandle> {
     parameters: (t.inputSchema ?? { type: "object", properties: {} }) as Record<string, unknown>,
     defaultPermission: "ask", // external tools need permission
     execute: async (args, ctx) => {
-      const raw = await client.callTool({
-        name: t.name,
-        arguments: args,
-      });
+      const raw = await withTimeout(
+        client.callTool({
+          name: t.name,
+          arguments: args,
+        }),
+        CALL_TOOL_TIMEOUT_MS,
+        `MCP tool ${t.name} timed out after ${CALL_TOOL_TIMEOUT_MS}ms`
+      );
       const text = extractMcpText(raw);
       const isError = raw?.isError === true;
       const truncated = text.length > 4096;
@@ -105,4 +109,14 @@ function extractMcpText(raw: Record<string, unknown>): string {
       return JSON.stringify(c);
     })
     .join("\n");
+}
+
+/** Default MCP tool call timeout (ms) — prevents a hung server from blocking the loop. */
+const CALL_TOOL_TIMEOUT_MS = 30_000;
+
+/** Race a promise against a timeout; rejects with the given message on timeout. */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  const { promise: timeoutPromise, reject: rejectTimeout } = Promise.withResolvers<never>();
+  const timer = setTimeout(() => rejectTimeout(new Error(message)), ms);
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer)) as Promise<T>;
 }

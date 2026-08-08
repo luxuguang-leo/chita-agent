@@ -193,8 +193,10 @@ export const gitTool: Tool = {
     }
     // branch removed from M1 whitelist (Cursor F4: branch -D is destructive)
     try {
-      // argv array — no shell interpolation (Cursor residual nit: leave bash behind)
-      const out = execFileSync("git", sub.split(" "), {
+      // argv array via shell-style tokenizer (handles quoted paths; no shell
+      // interpolation — Cursor F7: split(' ') broke quoted paths)
+      const argv = tokenizeArgs(sub);
+      const out = execFileSync("git", argv, {
         cwd: ctx.cwd,
         timeout: 10000,
         encoding: "utf-8",
@@ -233,4 +235,42 @@ export function registerBuiltinTools(registry: { register(t: Tool): void }): voi
   registry.register(globTool);
   registry.register(gitTool);
   registry.register(doneTool);
+}
+
+/**
+ * Minimal shell-style argv tokenizer: splits on whitespace but respects
+ * single and double quotes (for paths with spaces). No expansion, no
+ * interpolation — safe for execFileSync argv (Cursor F7).
+ */
+export function tokenizeArgs(input: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      else current += ch;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') inDouble = false;
+      else current += ch;
+      continue;
+    }
+    if (ch === "'") inSingle = true;
+    else if (ch === '"') inDouble = true;
+    else if (ch === " " || ch === "\t") {
+      if (current) {
+        args.push(current);
+        current = "";
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) args.push(current);
+  return args;
 }

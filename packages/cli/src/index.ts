@@ -13,6 +13,7 @@ import { loadConfig, initConfig, apiKey, CONFIG_PATH } from "./config.ts";
 import { AgentLoop } from "@chita/agent/src/loop.ts";
 import { OpenAICompatibleProvider } from "@chita/ai/src/index.ts";
 import { scrubSecrets } from "@chita/agent/src/scrub.ts";
+import { runJudge } from "@chita/agent/src/judge.ts";
 
 export const VERSION = "0.1.0";
 
@@ -29,7 +30,7 @@ function runInit(): void {
   );
 }
 
-async function runAgent(task: string, opts: { plan?: boolean }): Promise<void> {
+async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean }): Promise<void> {
   const cfg = loadConfig();
   const key = apiKey();
   if (!key) {
@@ -37,6 +38,7 @@ async function runAgent(task: string, opts: { plan?: boolean }): Promise<void> {
     process.exit(1);
   }
 
+  // Worker provider: the model doing the task
   const provider = new OpenAICompatibleProvider({
     baseUrl: `https://api.deepseek.com/v1`,
     apiKey: key,
@@ -64,6 +66,21 @@ async function runAgent(task: string, opts: { plan?: boolean }): Promise<void> {
   const outcome = await loop.run(task);
   console.log(`\n[chita] state: ${outcome.state}${outcome.summary ? ` | ${outcome.summary}` : ""}`);
   if (outcome.state !== "DONE") process.exitCode = 1;
+
+  // /goal judge (v2.1 §2.2, M4): independent verification on done().
+  // Judge uses a SEPARATE provider instance (never the worker's) so the
+  // evaluating model is distinct from the working model (Cursor nit: the
+  // orchestration layer guarantees this, not the judge module itself).
+  if (opts.judge && outcome.state === "DONE") {
+    const judgeProvider = new OpenAICompatibleProvider({
+      baseUrl: `https://api.deepseek.com/v1`,
+      apiKey: key,
+      model: cfg.model, // same model family, but independent instance/call
+    });
+    const judgeResult = await runJudge(judgeProvider, loop.getConversation(), task);
+    console.log(`[chita] judge: ${judgeResult.verdict} — ${judgeResult.reason}`);
+    if (judgeResult.verdict === "fail") process.exitCode = 1;
+  }
 }
 
 async function main(): Promise<void> {
@@ -79,6 +96,7 @@ async function main(): Promise<void> {
         "  chita init               generate ~/.chita/config.json",
         '  chita "task"             run a task (--print mode)',
         '  chita --plan "task"      read-only analysis (plan mode)',
+        "  chita --judge \"task\"     run task + /goal judge verification",
         "  chita --resume           resume session (M2+)",
         "",
         "Env: CHITA_API_KEY required for running tasks",
@@ -95,6 +113,10 @@ async function main(): Promise<void> {
   }
   if (args[0] === "--plan") {
     await runAgent(args.slice(1).join(" "), { plan: true });
+    return;
+  }
+  if (args[0] === "--judge") {
+    await runAgent(args.slice(1).join(" "), { judge: true });
     return;
   }
   await runAgent(args.join(" "), { plan: false });

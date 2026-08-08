@@ -8,7 +8,7 @@
 
 import { test, expect } from "bun:test";
 import { ToolRegistry } from "./index.ts";
-import { registerBuiltinTools, gitTool } from "./builtin.ts";
+import { registerBuiltinTools, gitTool, tokenizeArgs } from "./builtin.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -71,4 +71,12 @@ test("write tool requires ask permission (denied without autoApprove)", async ()
 
 test("read tool default permission is allow", () => {
   expect(gitTool.defaultPermission).toBe("allow");
+});
+
+test("tokenizeArgs: splits whitespace, respects quotes", () => {
+  expect(tokenizeArgs("status --porcelain")).toEqual(["status", "--porcelain"]);
+  expect(tokenizeArgs('diff "my file.txt"')).toEqual(["diff", "my file.txt"]);
+  expect(tokenizeArgs("log --oneline 'quoted path'")).toEqual(["log", "--oneline", "quoted path"]);
+  expect(tokenizeArgs("")).toEqual([]);
+  expect(tokenizeArgs("  spaced  out  ")).toEqual(["spaced", "out"]);
 });
