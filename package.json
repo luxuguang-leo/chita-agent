@@ -3,10 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "build": "bun build --target=bun ./packages/cli/src/index.ts --outfile ./dist/chita",
-    "test": "bun test"
+    "test": "bun test",
+    "evals": "bun packages/evals/src/cli.ts"
   },
   "devDependencies": {
     "bun-types": "^1.3.14"
