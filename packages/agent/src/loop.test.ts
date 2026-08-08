@@ -44,7 +44,7 @@ function makeLoop(script: () => StreamEvent[][]): { loop: AgentLoop; calls: stri
 test("done tool hard gate: done() call transitions to DONE", async () => {
   // Turn 1: model says final text without done -> loop injects gate message
   // Turn 2: model calls done -> DONE
-  const script = [
+  const script: StreamEvent[][] = [
     [{ kind: "message", message: { role: "assistant", content: "I think I'm done" } }],
     [{ kind: "done", summary: "task complete" }],
   ];
@@ -55,7 +55,7 @@ test("done tool hard gate: done() call transitions to DONE", async () => {
 });
 
 test("steering message injected between turns", async () => {
-  const script = [
+  const script: StreamEvent[][] = [
     [{ kind: "message", message: { role: "assistant", content: "planning..." } }],
     [{ kind: "message", message: { role: "assistant", content: "adjusted" } }],
     [{ kind: "done", summary: "ok" }],
@@ -86,7 +86,7 @@ test("steering message injected between turns", async () => {
 
 test("tool call executes through registry with permission hook", async () => {
   const toolCalls: string[] = [];
-  const script = [
+  const script: StreamEvent[][] = [
     [
       { kind: "tool_call", toolName: "read", args: { path: "package.json" } },
       { kind: "message", message: { role: "assistant", content: "read it" } },
@@ -103,7 +103,7 @@ test("tool call executes through registry with permission hook", async () => {
 });
 
 test("maxIterations cap stops runaway loop", async () => {
-  const script = [[{ kind: "message", message: { role: "assistant", content: "never done" } }]];
+  const script: StreamEvent[][] = [[{ kind: "message", message: { role: "assistant", content: "never done" } }]];
   const loop = new AgentLoop({
     cwd: "/tmp",
     provider: new FakeProvider(() => script),
