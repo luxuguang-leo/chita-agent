@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+.DS_Store
+
+# eval fixture 运行时生成的 git 历史（build-env.ts 产物）
+evals/cases/*/env/.git/

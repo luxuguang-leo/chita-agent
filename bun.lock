@@ -1,0 +1,49 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "chita-agent",
+      "devDependencies": {
+        "bun-types": "^1.3.14",
+      },
+    },
+    "packages/agent": {
+      "name": "@chita/agent",
+      "version": "0.0.0",
+    },
+    "packages/ai": {
+      "name": "@chita/ai",
+      "version": "0.0.0",
+    },
+    "packages/cli": {
+      "name": "@chita/cli",
+      "version": "0.0.0",
+    },
+    "packages/session": {
+      "name": "@chita/session",
+      "version": "0.0.0",
+    },
+    "packages/tools": {
+      "name": "@chita/tools",
+      "version": "0.0.0",
+    },
+  },
+  "packages": {
+    "@chita/agent": ["@chita/agent@workspace:packages/agent"],
+
+    "@chita/ai": ["@chita/ai@workspace:packages/ai"],
+
+    "@chita/cli": ["@chita/cli@workspace:packages/cli"],
+
+    "@chita/session": ["@chita/session@workspace:packages/session"],
+
+    "@chita/tools": ["@chita/tools@workspace:packages/tools"],
+
+    "@types/node": ["@types/node@26.2.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg=="],
+
+    "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
+
+    "undici-types": ["undici-types@8.3.0", "", {}, "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="],
+  }
+}

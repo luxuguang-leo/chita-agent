@@ -1,0 +1,61 @@
+{
+  "__meta": {
+    "sessionId": "20260809-001",
+    "cwd": "/Users/luxuguang/Projects/sample-repo",
+    "repoRoot": "/Users/luxuguang/Projects/sample-repo",
+    "model": "deepseek-chat",
+    "provider": "openai-compatible",
+    "createdAt": "2026-08-09T01:00:00+08:00",
+    "pinnedResources": [
+      { "name": "git-tools", "version": "1.0.0", "commit": "a1b2c3d", "hash": "sha256:abc...", "source": "builtin" }
+    ]
+  },
+  "events": [
+    {
+      "seq": 1,
+      "type": "message",
+      "role": "user",
+      "content": "帮我看看这个项目的入口文件",
+      "ts": "2026-08-09T01:00:01+08:00",
+      "tokens": 40
+    },
+    {
+      "seq": 2,
+      "type": "tool_call",
+      "tool": { "name": "read", "args": { "path": "src/index.ts" }, "permission": "allow", "timeoutMs": 5000 },
+      "ts": "2026-08-09T01:00:02+08:00",
+      "tokens": 30
+    },
+    {
+      "seq": 3,
+      "type": "tool_result",
+      "toolName": "read",
+      "ok": true,
+      "output": "export const name = ...",
+      "ts": "2026-08-09T01:00:02+08:00",
+      "tokens": 60
+    },
+    {
+      "seq": 4,
+      "type": "error",
+      "category": "malformed",
+      "retryable": true,
+      "message": "tool call args 缺 name 字段",
+      "faultSide": "model",
+      "ts": "2026-08-09T01:00:03+08:00"
+    },
+    {
+      "seq": 5,
+      "type": "context_truncated",
+      "droppedMessages": 12,
+      "droppedTokens": 4200,
+      "ts": "2026-08-09T01:00:10+08:00"
+    },
+    {
+      "seq": 6,
+      "type": "done",
+      "summary": "已确认入口文件为 src/index.ts",
+      "ts": "2026-08-09T01:00:30+08:00"
+    }
+  ]
+}
