@@ -32,6 +32,8 @@ export interface ToolResult {
   error?: string;
   /** Evidence verification hint (M3 subagent contract) */
   verificationHint?: string;
+  /** Secrets were scrubbed from output (v2.1 F4; written back to trace) */
+  redacted?: boolean;
 }
 
 export interface Tool {

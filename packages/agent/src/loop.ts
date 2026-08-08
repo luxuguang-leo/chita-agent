@@ -325,6 +325,7 @@ export class AgentLoop {
       output: result.output,
       error: result.error,
       truncated: result.truncated,
+      redacted: result.redacted,
       ts: new Date().toISOString(),
     });
     return result;

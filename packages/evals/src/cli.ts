@@ -68,7 +68,7 @@ async function main(): Promise<void> {
         afterToolCall: (_name, result) => {
           if (result.output) {
             const scrubbed = scrubSecrets(result.output);
-            return { ok: result.ok, output: scrubbed.text };
+            return { ok: result.ok, output: scrubbed.text, redacted: scrubbed.redacted };
           }
         },
       },
