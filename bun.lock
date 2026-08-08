@@ -11,6 +11,10 @@
     "packages/agent": {
       "name": "@chita/agent",
       "version": "0.0.0",
+      "dependencies": {
+        "@chita/session": "0.0.0",
+        "@chita/tools": "0.0.0",
+      },
     },
     "packages/ai": {
       "name": "@chita/ai",
@@ -20,6 +24,15 @@
       "name": "@chita/cli",
       "version": "0.0.0",
     },
+    "packages/evals": {
+      "name": "@chita/evals",
+      "version": "0.0.0",
+      "dependencies": {
+        "@chita/agent": "0.0.0",
+        "@chita/session": "0.0.0",
+        "@chita/tools": "0.0.0",
+      },
+    },
     "packages/session": {
       "name": "@chita/session",
       "version": "0.0.0",
@@ -27,6 +40,9 @@
     "packages/tools": {
       "name": "@chita/tools",
       "version": "0.0.0",
+      "dependencies": {
+        "@chita/session": "0.0.0",
+      },
     },
   },
   "packages": {
@@ -35,6 +51,8 @@
     "@chita/ai": ["@chita/ai@workspace:packages/ai"],
 
     "@chita/cli": ["@chita/cli@workspace:packages/cli"],
+
+    "@chita/evals": ["@chita/evals@workspace:packages/evals"],
 
     "@chita/session": ["@chita/session@workspace:packages/session"],
 
