@@ -1,18 +1,18 @@
 /**
- * chita trace schema — 评估驱动的燃料（v2.1 §2.2 / §8）
+ * chita trace schema — the fuel for eval-driven development (v2.1 §2.2 / §8)
  *
- * 设计要点：
- * - 每条消息/工具调用全量记录，是 traces 唯一来源
- * - fault-side：失败归因（model/harness/tool/env），判定优先级 env→tool→harness→model
- * - verification_hint：subagent 证据契约（M3），M0 预留字段
- * - redacted：脱敏标记（v2.1 F4：tape 可能吸入密钥）
- * - pinning：MCP/Skills 供应链审计 stub（v2.1 N2，name/version/commit/hash/来源）
+ * Design notes:
+ * - Every message and tool call is recorded in full; this is the only source of traces.
+ * - fault-side: failure attribution (model/harness/tool/env), priority env→tool→harness→model
+ * - verificationHint: subagent evidence contract (M3), reserved at M0
+ * - redacted: redaction marker (v2.1 F4: tapes can absorb secrets)
+ * - pinning: MCP/Skills supply-chain audit stub (v2.1 N2: name/version/commit/hash/source)
  */
 
-/** 失败归因侧（Scale AI fault-side，v2.1 §8） */
+/** Failure attribution side (Scale AI fault-side, v2.1 §8) */
 export type FaultSide = "model" | "harness" | "tool" | "env" | "unknown";
 
-/** 消息角色（v2.1 §2.1 四类 + system/context 事件） */
+/** Message role (v2.1 §2.1 four roles + system/context events) */
 export type TraceRole =
   | "user"
   | "assistant"
@@ -21,118 +21,126 @@ export type TraceRole =
   | "system"
   | "context";
 
-/** trace 事件类型 */
+/** Trace event types */
 export type TraceEventType =
-  | "message" // 常规消息（user/assistant/reasoning/system）
-  | "tool_call" // 模型请求调用工具
-  | "tool_result" // 工具执行结果
-  | "judge" // /goal judge 评估（M4）
-  | "context_truncated" // context-manager 截断（v2.1 可观测性）
-  | "error" // 错误事件
-  | "done"; // done 工具调用（v2.1 §2.2 早停硬门）
+  | "message" // regular message (user/assistant/reasoning/system)
+  | "tool_call" // model requested a tool invocation
+  | "tool_result" // tool execution result
+  | "judge" // /goal judge evaluation (M4)
+  | "context_truncated" // context-manager truncation (v2.1 observability)
+  | "error" // error event
+  | "done"; // done tool call (v2.1 §2.2 early-stop hard gate)
 
-/** 工具权限（v2.1 §2.3） */
+/** Tool permission (v2.1 §2.3) */
 export type Permission = "allow" | "ask" | "deny";
 
-/** MCP/Skills 供应链 pinning stub（v2.1 N2） */
+/** MCP/Skills supply-chain pinning stub (v2.1 N2) */
 export interface PinningStub {
-  /** 资源名（skill 名 / MCP server 名） */
+  /** Resource name (skill name / MCP server name) */
   name: string;
-  /** 版本 */
+  /** Version */
   version?: string;
-  /** 来源 commit */
+  /** Source commit */
   commit?: string;
-  /** 内容哈希 */
+  /** Content hash */
   hash?: string;
-  /** 来源（npm / github / local / 自研） */
+  /** Origin (npm / github / local / self-built) */
   source: "npm" | "github" | "local" | "builtin" | "unknown";
 }
 
-/** 工具调用元数据 */
+/** Tool call metadata */
 export interface ToolCallMeta {
   name: string;
   args?: unknown;
-  /** 权限裁决（v2.1 §2.3，挂 beforeToolCall hook） */
+  /** Permission ruling (v2.1 §2.3, hooked into beforeToolCall) */
   permission: Permission;
-  /** 超时（ms） */
+  /** Timeout (ms) */
   timeoutMs?: number;
 }
 
-/** 基础 trace 事件 */
+/** Base trace event */
 export interface TraceEventBase {
-  /** 事件序号（单调递增） */
+  /** Monotonic event sequence */
   seq: number;
   type: TraceEventType;
-  /** ISO 8601 时间戳 */
+  /** ISO 8601 timestamp */
   ts: string;
-  /** token 估算（M1 4×字符保守估计，M1.5 tokenizer） */
+  /** Token estimate (M1: 4× chars conservative; M1.5: tokenizer) */
   tokens?: number;
-  /** 失败归因（error/judge 事件填） */
+  /** Failure attribution (filled for error/judge events) */
   faultSide?: FaultSide;
-  /** 脱敏标记：true = 原内容含敏感信息已 scrub（v2.1 F4） */
+  /** Redaction marker: true = original content contained secrets and was scrubbed (v2.1 F4) */
   redacted?: boolean;
 }
 
-/** 消息事件 */
+/** Message event */
 export interface MessageEvent extends TraceEventBase {
   type: "message";
   role: Exclude<TraceRole, "tool">;
   content: string;
 }
 
-/** 工具调用事件 */
+/** Tool call event */
 export interface ToolCallEvent extends TraceEventBase {
   type: "tool_call";
   tool: ToolCallMeta;
+  /** Tool call id (paired with ToolResultEvent.callId; required for M1 parallel/retry) */
+  callId?: string;
 }
 
-/** 工具结果事件 */
+/** Tool result event */
 export interface ToolResultEvent extends TraceEventBase {
   type: "tool_result";
   toolName: string;
-  /** 成功与否 */
+  /** Tool call id (paired with ToolCallEvent.callId; required for M1 parallel/retry) */
+  callId?: string;
+  /** Success flag */
   ok: boolean;
-  /** 输出（可能被截断 4096 字节，v2.1 F4 第一道防线） */
+  /** Output (possibly truncated to 4096 bytes, v2.1 F4 first line of defense) */
   output?: string;
-  /** 截断标记 */
+  /** Truncation marker */
   truncated?: boolean;
-  /** 错误信息（ok=false 时） */
+  /** Error message (when ok=false) */
   error?: string;
+  /** Evidence verification hint (v2.1 §8 / M3 subagent evidence contract, reserved at M0):
+   *  a single command the main agent can run to verify this result is real
+   *  (e.g. "node test.js") */
+  verificationHint?: string;
 }
 
-/** judge 评估事件（M4） */
+/** Judge evaluation event (M4) */
 export interface JudgeEvent extends TraceEventBase {
   type: "judge";
   verdict: "pass" | "fail" | "uncertain";
   reason?: string;
 }
 
-/** 上下文截断事件（v2.1 截断可观测性） */
+/** Context truncation event (v2.1 truncation observability) */
 export interface ContextTruncatedEvent extends TraceEventBase {
   type: "context_truncated";
-  /** 丢弃的消息数 */
+  /** Number of dropped messages */
   droppedMessages: number;
-  /** 估算丢弃 token 数 */
+  /** Estimated dropped tokens */
   droppedTokens: number;
 }
 
-/** 错误事件（v2.1 §2.4 错误分层） */
+/** Error event (v2.1 §2.4 error layering) */
 export interface ErrorEvent extends TraceEventBase {
   type: "error";
-  /** 错误分类：4xx 不重试 / 5xx/429 退避 / overflow / malformed */
+  /** Error category: 4xx no-retry / 5xx+429 backoff / overflow / malformed */
   category: "auth" | "rate_limit" | "server" | "overflow" | "malformed" | "other";
-  /** 是否可重试（4xx 不可，5xx/429 可） */
+  /** Whether retrying makes sense (4xx no, 5xx/429 yes) */
   retryable: boolean;
   message: string;
 }
 
-/** done 事件（v2.1 §2.2 早停硬门） */
+/** done event (v2.1 §2.2 early-stop hard gate) */
 export interface DoneEvent extends TraceEventBase {
   type: "done";
   summary?: string;
 }
 
-/** 联合 trace 事件 */
+/** Union of trace events */
 export type TraceEvent =
   | MessageEvent
   | ToolCallEvent
@@ -142,22 +150,22 @@ export type TraceEvent =
   | ErrorEvent
   | DoneEvent;
 
-/** 会话元数据（tape 头部，v2.1 §2.7） */
+/** Session metadata (tape header, v2.1 §2.7) */
 export interface SessionMeta {
   sessionId: string;
-  /** 工作目录（按 cwd 分组存储） */
+  /** Working directory (sessions grouped by cwd) */
   cwd: string;
   repoRoot?: string;
   model: string;
   provider: string;
   createdAt: string;
-  /** 父会话（fork 语义，v2.1 §2.7） */
+  /** Parent session (fork semantics, v2.1 §2.7) */
   parentId?: string;
-  /** 引用资源 pinning（MCP/Skills，v2.1 N2） */
+  /** Pinned resource references (MCP/Skills, v2.1 N2) */
   pinnedResources?: PinningStub[];
 }
 
-/** trace 文件 = JSONL，每行一个 TraceEvent；首行可为 SessionMeta（以 __meta 标记） */
+/** M0 uses a single JSON document (__meta + events[]); M1 tape switches to JSONL (one event per line) */
 export interface TraceFile {
   __meta: SessionMeta;
   events: TraceEvent[];

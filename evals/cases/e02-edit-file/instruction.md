@@ -1,14 +1,16 @@
-# e02-edit-file：修一个明确的 bug
+# e02-edit-file: fix a specific bug
 
-## 任务
+## Task
 
-`env/calc.js` 里有一个函数 `add(a, b)`，实现有误：它对负数处理不对（例如 `add(-1, 2)` 返回 3 而非 1）。请修复它，使所有输入符合"两数之和"的数学定义。
+`env/calc.js` contains a function `add(a, b)` whose implementation is buggy:
+it mishandles negative numbers (e.g. `add(-1, 2)` returns 3 instead of 1).
+Fix it so that every input matches the mathematical definition of "sum of two numbers".
 
-## 环境约束
+## Constraints
 
-- 只修改 `env/calc.js`，不要改其他文件
-- 修复后可以用 `node env/calc.js` 自测
+- Only modify `env/calc.js`; do not touch other files
+- You may run `node env/calc.js` to self-test after fixing
 
-## 期望输出
+## Expected output
 
-修复后的 `add` 函数。不需要长篇解释。
+The fixed `add` function. No lengthy explanation needed.

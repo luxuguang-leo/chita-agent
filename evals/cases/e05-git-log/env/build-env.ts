@@ -1,9 +1,10 @@
 /**
- * e05 env 构建器 — 生成带 4 个提交的 git fixture
+ * e05 env builder — generates a git fixture with 4 commits
  *
- * 设计：env 目录本身不含 .git（避免被外层仓库当 submodule 提交），
- * 运行时执行本脚本生成 git 历史，供 agent 调查与 verifier 判定。
- * Ground Truth：最近提交 "fix bug in app"；src/app.js 被改 3 次。
+ * Design: the env directory ships without .git (avoids being tracked as a
+ * submodule by the outer repo); running this script generates the git history
+ * for the agent to investigate and the verifier to judge.
+ * Ground truth: last commit "fix bug in app"; src/app.js touched 3 times.
  */
 
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";

@@ -1,7 +1,7 @@
 /**
- * e04 verifier — 检查 slugify 修复是否覆盖两个场景
+ * e04 verifier — checks that the slugify fix covers both scenarios
  *
- * 判据：两个 bug 场景 + 边界（大小写/前后空格/单字符）。
+ * Ground truth: both bug scenarios plus edge cases (case, surrounding spaces, single char).
  */
 
 import { execSync } from "node:child_process";
@@ -21,7 +21,7 @@ const cases = [
 for (const [input, want] of cases) {
   const got = slugify(input);
   if (got !== want) {
-    console.error('FAIL: slugify(' + JSON.stringify(input) + ') = ' + JSON.stringify(got) + ' 期望 ' + JSON.stringify(want));
+    console.error('FAIL: slugify(' + JSON.stringify(input) + ') = ' + JSON.stringify(got) + ' expected ' + JSON.stringify(want));
     process.exit(1);
   }
 }
@@ -34,7 +34,7 @@ try {
     stdio: "pipe",
   });
 } catch (e) {
-  console.error("FAIL: slugify 行为不正确");
+  console.error("FAIL: slugify behavior is incorrect");
   console.error(String(e.stderr || e.stdout || e.message).slice(0, 500));
   process.exit(1);
 }

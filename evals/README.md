@@ -1,34 +1,39 @@
-# chita Eval Case 格式（v1，M0 定稿）
+# chita Eval Cases (v1, frozen at M0)
 
-> 依据：agent-eval-engineering skill（LangChain 方法论）
-> 每个 case = 三件套：`instruction.md` + `env/`（fixture 仓库）+ `verifier/`（确定性检查）
-> 一个 case 只测一个能力。Verifier 第一版必被钻空子——验证 Environment 最终状态，不信 agent 自述。
+> Based on the `agent-eval-engineering` skill (LangChain methodology).
+> Each case = three parts: `instruction.md` + `env/` (fixture repo) + `verifier/` (deterministic check).
+> One case tests exactly one capability. The first verifier version is always gameable —
+> verify the final Environment state, never the agent's self-report.
 
-## 目录结构
+## Layout
 
 ```
 evals/cases/<id>/
-├── instruction.md      # 给 agent 的任务指令（不得含答案/验证标准）
-├── env/                # environment：fixture 仓库（可重置）
+├── instruction.md      # task instructions for the agent (must NOT contain the answer or pass criteria)
+├── env/                # environment: fixture repo (resettable)
 └── verifier/
-    └── check.<ext>     # 确定性检查脚本；退出码 0 = pass，非 0 = fail
+    └── check.<ext>     # deterministic check; exit 0 = pass, non-zero = fail
 ```
 
-## 运行约定（M0-M1）
+## Running (M0-M1)
 
-- M0：verifier 手动跑（`bun evals/cases/<id>/verifier/check.ts`），不进 agent loop
-- M1：case 挂进 evals runner（不进 M1 判定）
-- 隔离：tmpdir + fixture 仓库（每个 case 独立目录，可重置）；Docker 沙箱是 M4 以后
-- fault-side：case 失败时归因（env→tool→harness→model），写回 trace
+- M0: verifier runs manually (`bun evals/cases/<id>/verifier/check.ts`), not inside the agent loop
+- M1: cases hook into the evals runner (not part of M1 acceptance)
+- Isolation: tmpdir + fixture repo (one dir per case, resettable); Docker sandbox is M4+
+- fault-side: attribute failures (env→tool→harness→model) back into traces
+- **Read-only case artifact contract**: the task requires the agent to write its conclusion
+  to `env/answer.json` (structure per case instruction); the verifier asserts on that file —
+  in read-only tasks the environment never changes, so the answer must be persisted as an
+  artifact before the agent's work can be verified; otherwise it is only a fixture self-check
 
-## 三件套要点
+## Three parts
 
-| 件 | 要求 |
+| Part | Requirement |
 |---|---|
-| instruction.md | 描述任务目标 + 环境约束；**不含答案、不含验证标准**（防 shortcut） |
-| env/ | fixture：最小可编译项目，含 bug/待改点；只读+可重置 |
-| verifier/ | 确定性检查：断言 Environment 最终状态（文件存在/内容正确/命令输出），非 agent 自述 |
+| instruction.md | task goal + environment constraints + **answer location (answer.json shape)**; must NOT contain the answer or pass criteria (anti-shortcut) |
+| env/ | fixture: minimal compilable project with a bug/pending change; read-only + resettable; **answer.json is an agent artifact, not preset in the fixture** |
+| verifier/ | deterministic check: asserts the final Environment state (file exists / content correct / command output); read-only cases assert on answer.json fields, never on the agent's self-report |
 
-## 命名
+## Naming
 
-`e<NN>-<动词>-<对象>`：e01-read-project, e02-edit-file, ...
+`e<NN>-<verb>-<object>`: e01-read-project, e02-edit-file, ...

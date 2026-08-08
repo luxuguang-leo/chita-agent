@@ -1,9 +1,9 @@
-// 故意有 bug：负数相加处理错误
+// Intentionally buggy: negative-number handling is wrong
 export function add(a, b) {
   return a + Math.abs(b);
 }
 
-// 自测入口
+// Self-test entry
 if (import.meta.main) {
   console.log("add(-1, 2) =", add(-1, 2));
 }

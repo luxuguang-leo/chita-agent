@@ -1,17 +1,18 @@
-# e07-consistent-edit：跨文件一致改名
+# e07-consistent-edit: rename consistently across files
 
-## 任务
+## Task
 
-`env/` 的 `cart.js` 把商品单价字段叫 `price`，但 `order.js` 用的是 `cost`。请统一为 `price`：
-1. 修改 `order.js` 中引用单价的地方，改用 `price`
-2. 确保 `cart.js` 不变
-3. 不要破坏现有逻辑
+In `env/`, `cart.js` names the per-item price field `price`, but `order.js` uses `cost`.
+Unify on `price`:
+1. Modify `order.js` wherever it references the price field, switching to `price`
+2. Keep `cart.js` unchanged
+3. Do not break the existing logic
 
-## 环境约束
+## Constraints
 
-- 只修改需要改的文件
-- 改完可以跑 `node env/verify-usage.js` 自测
+- Only modify the files that need changing
+- After the edit you may run `node env/verify-usage.js` to self-check
 
-## 期望输出
+## Expected output
 
-一句话说明改了哪些文件。
+One sentence stating which files were changed.

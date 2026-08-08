@@ -1,16 +1,25 @@
-# e01-read-project：读懂项目入口
+# e01-read-project: understand the project entry
 
-## 任务
+## Task
 
-这个仓库是一个最小 Node 项目。请找出：
-1. 项目的入口文件是哪个（package.json 的 main 或 bin 指向）
-2. 入口文件第 1 行导出了什么
+This repository is a minimal Node project. Find out:
+1. Which file is the project entry (as pointed to by package.json `main`)
+2. What the first line of the entry file exports
 
-## 环境约束
+## Constraints
 
-- 只读任务：不要修改任何文件
-- 工作目录：env/（fixture 仓库）
+- Read-only task: do not modify any file
+- Working directory: `env/` (fixture repo)
 
-## 期望输出
+## Answer location
 
-用一两句话回答两个问题即可。
+Write your conclusion to `env/answer.json`:
+
+```json
+{
+  "entryFile": "<relative path, e.g. src/main.js>",
+  "firstExport": "<identifier exported on line 1>"
+}
+```
+
+Do not write any other file.

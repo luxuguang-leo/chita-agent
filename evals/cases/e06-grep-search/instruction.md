@@ -1,16 +1,25 @@
-# e06-grep-search：跨文件搜索定位
+# e06-grep-search: locate code across files
 
-## 任务
+## Task
 
-`env/` 是一个多文件项目。请用 grep/搜索找出：
-1. 哪个文件定义了函数 `computeTotal`
-2. 这个函数被哪些文件调用（列出文件名）
+`env/` is a multi-file project. Use grep/search to find out:
+1. Which file defines the function `computeTotal`
+2. Which files call this function (list the file names)
 
-## 环境约束
+## Constraints
 
-- 只读任务，不要修改文件
-- 答案以文件路径为准
+- Read-only task: do not modify files
+- Answers are file paths
 
-## 期望输出
+## Answer location
 
-定义文件 + 调用文件列表。
+Write your conclusion to `env/answer.json`:
+
+```json
+{
+  "definitionFile": "<relative path of the defining file>",
+  "callerFiles": ["<relative path of a caller file>"]
+}
+```
+
+Do not write any other file.

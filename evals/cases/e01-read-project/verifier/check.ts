@@ -1,17 +1,18 @@
 /**
- * e01 verifier — 确定性检查 Environment 最终状态
+ * e01 verifier — checks the agent's answer (env/answer.json) for accuracy
  *
- * 判据：fixture 的 main 指向 src/main.js，且第 1 行导出 GREETING。
- * 注意：本 verifier 检查的是"答案可验证的事实"（文件内容），
- *      不是 agent 的自述——agent 若读错文件或编造，这里会 fail。
+ * Ground truth:
+ * - entryFile = "src/main.js" (package.json main)
+ * - firstExport = "GREETING" (identifier exported on line 1 of the entry file)
+ * Read-only tasks leave the environment unchanged, so the answer must be
+ * written to env/answer.json before the agent's work can be verified; otherwise fail.
  */
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const envDir = join(import.meta.dir, "..", "env");
-const pkgPath = join(envDir, "package.json");
-const mainPath = join(envDir, "src", "main.js");
+const answerPath = join(envDir, "answer.json");
 
 let failed = false;
 const fail = (msg: string) => {
@@ -19,27 +20,32 @@ const fail = (msg: string) => {
   console.error(`FAIL: ${msg}`);
 };
 
-// 1. package.json main 指向 src/main.js
-const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-if (pkg.main !== "src/main.js") fail(`main 应为 src/main.js，实际 ${pkg.main}`);
-if (pkg.scripts?.start !== "node src/main.js") fail(`start 脚本异常: ${pkg.scripts?.start}`);
-
-// 2. main.js 存在且第 1 行导出 GREETING
-if (!existsSync(mainPath)) fail("src/main.js 不存在");
-else {
-  const firstLine = readFileSync(mainPath, "utf-8").split("\n")[0];
-  if (!firstLine.includes("GREETING")) fail(`第 1 行未导出 GREETING: ${firstLine}`);
+// 1. The agent's artifact must exist (missing answer.json = task not completed)
+if (!existsSync(answerPath)) {
+  fail("env/answer.json missing — agent did not write its answer");
+  process.exit(1);
 }
 
-// 3. 入口真实可运行（环境最终状态，非自述）
-const { execSync } = require("node:child_process");
+let answer: { entryFile?: string; firstExport?: string };
 try {
-  const out = execSync(`node -e "import('${mainPath}').then(m => process.exit(m.GREETING ? 0 : 1))"`, {
-    cwd: envDir,
-    timeout: 5000,
-  });
-} catch {
-  fail("入口模块无法加载 GREETING");
+  answer = JSON.parse(readFileSync(answerPath, "utf-8"));
+} catch (e) {
+  fail(`answer.json is not valid JSON: ${e}`);
+  process.exit(1);
+}
+
+// 2. Ground truth: fixture facts
+const pkg = JSON.parse(readFileSync(join(envDir, "package.json"), "utf-8"));
+const mainPath = join(envDir, pkg.main ?? "");
+const firstLine = existsSync(mainPath)
+  ? readFileSync(mainPath, "utf-8").split("\n")[0]
+  : "";
+
+if (answer.entryFile !== pkg.main) {
+  fail(`entryFile should be "${pkg.main}", got "${answer.entryFile}"`);
+}
+if (!firstLine.includes(answer.firstExport ?? "\u0000")) {
+  fail(`firstExport should be the identifier exported on line 1, got "${answer.firstExport}"`);
 }
 
 if (failed) process.exit(1);

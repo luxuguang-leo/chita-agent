@@ -1,11 +1,11 @@
 /**
- * chita CLI 入口（M0 版）
+ * chita CLI entry (M0 version)
  *
- * 子命令（M0 范围）：
- *   chita --version        版本号
- *   chita init             生成 ~/.chita/config.json
- *   chita "任务"           --print 模式占位（M1 实现）
- *   chita --resume         会话恢复占位（M1 实现）
+ * Subcommands (M0 scope):
+ *   chita --version        print version
+ *   chita init             generate ~/.chita/config.json
+ *   chita "task"           --print mode placeholder (implemented in M1)
+ *   chita --resume         session resume placeholder (implemented in M1)
  */
 
 import { loadConfig, initConfig, apiKey, CONFIG_PATH } from "./config.ts";
@@ -13,27 +13,25 @@ import { loadConfig, initConfig, apiKey, CONFIG_PATH } from "./config.ts";
 export const VERSION = "0.0.0";
 
 function printVersion(): void {
-  console.log(`chita ${VERSION} (猎豹 · 自建 coding agent)`);
+  console.log(`chita ${VERSION}`);
 }
 
 function runInit(): void {
   const { created } = initConfig();
   console.log(
     created
-      ? `✓ 已生成 ${CONFIG_PATH}（API key 请用环境变量 CHITA_API_KEY 设置）`
-      : `已存在 ${CONFIG_PATH}，跳过`
+      ? `created ${CONFIG_PATH} (set API key via CHITA_API_KEY env var)`
+      : `${CONFIG_PATH} already exists, skipping`
   );
 }
 
 async function printMode(task: string): Promise<void> {
   const cfg = loadConfig();
   const key = apiKey();
-  console.log(`[chita --print] 任务: ${task}`);
+  console.log(`[chita --print] task: ${task}`);
   console.log(`  provider=${cfg.provider} model=${cfg.model}`);
-  console.log(
-    key ? "  api key: ✓ (env)" : "  api key: ✗ 未设置 CHITA_API_KEY"
-  );
-  console.log("  [M0 占位] agent loop 于 M1 实现");
+  console.log(key ? "  api key: ok (env)" : "  api key: missing CHITA_API_KEY");
+  console.log("  [M0 placeholder] agent loop lands in M1");
 }
 
 async function main(): Promise<void> {
@@ -42,13 +40,13 @@ async function main(): Promise<void> {
   if (args.length === 0 || args.includes("-h") || args.includes("--help")) {
     console.log(
       [
-        "chita — 单机终端 coding agent（猎豹）",
+        "chita — a local terminal coding agent",
         "",
-        "用法:",
-        "  chita --version          版本号",
-        "  chita init               生成 ~/.chita/config.json",
-        "  chita \"任务\"            --print 模式（M1 实现）",
-        "  chita --resume           会话恢复（M1 实现）",
+        "Usage:",
+        "  chita --version          print version",
+        "  chita init               generate ~/.chita/config.json",
+        '  chita "task"             --print mode (M1)',
+        "  chita --resume           resume session (M1)",
         "",
       ].join("\n")
     );
@@ -58,7 +56,7 @@ async function main(): Promise<void> {
   if (args.includes("--version")) return printVersion();
   if (args[0] === "init") return runInit();
   if (args[0] === "--resume") {
-    console.log("[M0 占位] --resume 于 M1 实现");
+    console.log("[M0 placeholder] --resume lands in M1");
     return;
   }
   await printMode(args.join(" "));

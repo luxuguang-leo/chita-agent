@@ -15,7 +15,7 @@
       "seq": 1,
       "type": "message",
       "role": "user",
-      "content": "帮我看看这个项目的入口文件",
+      "content": "Look at this project's entry file",
       "ts": "2026-08-09T01:00:01+08:00",
       "tokens": 40
     },
@@ -32,6 +32,7 @@
       "toolName": "read",
       "ok": true,
       "output": "export const name = ...",
+      "verificationHint": "node -e \"import('./src/index.ts').then(m => console.log(m.name))\"",
       "ts": "2026-08-09T01:00:02+08:00",
       "tokens": 60
     },
@@ -40,7 +41,7 @@
       "type": "error",
       "category": "malformed",
       "retryable": true,
-      "message": "tool call args 缺 name 字段",
+      "message": "tool call args missing name field",
       "faultSide": "model",
       "ts": "2026-08-09T01:00:03+08:00"
     },
@@ -54,7 +55,7 @@
     {
       "seq": 6,
       "type": "done",
-      "summary": "已确认入口文件为 src/index.ts",
+      "summary": "Confirmed entry file is src/index.ts",
       "ts": "2026-08-09T01:00:30+08:00"
     }
   ]

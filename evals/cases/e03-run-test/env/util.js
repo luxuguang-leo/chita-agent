@@ -1,4 +1,4 @@
-// 极简测试运行器（避免依赖 node:test 版本差异）
+// Minimal test runner (avoids node:test version differences)
 let passed = 0;
 let failed = 0;
 const failures = [];
@@ -17,7 +17,7 @@ export function assert(cond) {
   if (!cond) throw new Error("assertion failed");
 }
 
-// 汇总输出
+// Summary output
 export function summary() {
   console.log(`tests: ${passed} passed, ${failed} failed`);
   for (const f of failures) console.log(`  FAIL: ${f.name} (${f.error})`);

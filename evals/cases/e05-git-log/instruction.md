@@ -1,16 +1,26 @@
-# e05-git-log：从提交历史找信息
+# e05-git-log: investigate the commit history
 
-## 任务
+## Task
 
-`env/` 是一个 git 仓库（已有若干提交）。请用 `git log` / `git show` 调查：
-1. 最近一次提交的 message 是什么
-2. 有多少个提交改过 `src/app.js` 这个文件
+`env/` is a git repository (running `bun env/build-env.ts` creates its commits).
+First run `bun env/build-env.ts` to build the repo, then use `git log` / `git show` to find out:
+1. The message of the most recent commit
+2. How many commits have touched `src/app.js`
 
-## 环境约束
+## Constraints
 
-- 只读任务：不要创建/修改/提交任何内容
-- 直接在 env/ 里执行 git 命令
+- Read-only task: do not create, modify, or commit anything
+- The build command only generates git history (idempotent, safe to re-run)
 
-## 期望输出
+## Answer location
 
-一句话：最近提交 message + 改过 app.js 的提交数。
+Write the outcome to `env/answer.json`:
+
+```json
+{
+  "lastCommitMessage": "<full message of the most recent commit>",
+  "appJsCommitCount": <number of commits touching src/app.js>
+}
+```
+
+The numbers must come from the git commands you actually ran.

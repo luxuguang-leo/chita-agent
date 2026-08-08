@@ -1,7 +1,8 @@
 /**
- * e02 verifier — 检查 add() 是否符合数学定义
+ * e02 verifier — checks that add() matches the mathematical definition
  *
- * 判据：对若干正/负/零组合，结果必须等于 a+b（Environment 最终状态，非自述）。
+ * Ground truth: for several positive/negative/zero combinations,
+ * the result must equal a+b (final Environment state, not self-reported).
  */
 
 import { readFileSync } from "node:fs";
@@ -10,7 +11,7 @@ import { execSync } from "node:child_process";
 
 const calcPath = join(import.meta.dir, "..", "env", "calc.js");
 
-// 用子进程加载修改后的 calc.js 并跑断言
+// Load the (possibly fixed) calc.js in a child process and run assertions
 const testScript = `
 import { add } from '${calcPath}';
 const cases = [
@@ -24,7 +25,7 @@ const cases = [
 for (const [a, b, want] of cases) {
   const got = add(a, b);
   if (got !== want) {
-    console.error('FAIL: add(' + a + ', ' + b + ') = ' + got + ' 期望 ' + want);
+    console.error('FAIL: add(' + a + ', ' + b + ') = ' + got + ' expected ' + want);
     process.exit(1);
   }
 }
@@ -38,13 +39,13 @@ try {
   });
 } catch (e) {
   const msg = String(e.stderr || e.stdout || e.message);
-  console.error("FAIL: add() 行为不符合数学定义");
+  console.error("FAIL: add() behavior does not match the mathematical definition");
   console.error(msg.slice(0, 500));
   process.exit(1);
 }
 
-// 源码检查：不应残留 Math.abs（修复的标记）
+// Source check: Math.abs should not remain (marker of a proper fix)
 const src = readFileSync(calcPath, "utf-8");
-if (src.includes("Math.abs")) console.warn("WARN: 仍含 Math.abs（可能只是部分修复）");
+if (src.includes("Math.abs")) console.warn("WARN: still contains Math.abs (fix may be partial)");
 
 console.log("PASS: e02-edit-file");

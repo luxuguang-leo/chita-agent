@@ -1,16 +1,25 @@
-# e03-run-test：运行测试并报告
+# e03-run-test: run the tests and report
 
-## 任务
+## Task
 
-`env/` 是一个带测试的最小项目。请：
-1. 运行项目的测试（`npm test` 或 `node --test`）
-2. 报告：测试通过了几条、失败了几条（如果有）
+`env/` is a minimal project with tests. Please:
+1. Run the project's tests (`npm test`)
+2. Record the outcome
 
-## 环境约束
+## Constraints
 
-- 不要修改任何文件（只读任务）
-- 测试失败是环境故意设置的，正常报告即可
+- Do not modify any files (read-only task; ignore temporary artifacts from `npm test`)
+- Test failure is intentionally part of the fixture; record it as-is
 
-## 期望输出
+## Answer location
 
-一句话测试结果摘要。
+Write the outcome to `env/answer.json`:
+
+```json
+{
+  "passed": <number of passed tests>,
+  "failed": <number of failed tests>
+}
+```
+
+The numbers must come from the actual test output you ran, not from guessing.
