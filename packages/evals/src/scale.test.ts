@@ -52,9 +52,14 @@ test("classifyFailure: harness for permission/blocked", () => {
   expect(classifyFailure(1, "agent did not finish (ERROR)")).toBe("harness");
 });
 
-test("classifyFailure: env for network/not-found tool errors", () => {
+test("classifyFailure: env for network tool errors", () => {
   expect(classifyFailure(1, undefined, ["ECONNRESET"])).toBe("env");
-  expect(classifyFailure(1, undefined, ["file not found"])).toBe("env");
+  expect(classifyFailure(1, undefined, ["timeout after 5s"])).toBe("env");
+});
+
+test("classifyFailure: verifier crash is grader, not model (Cursor F2)", () => {
+  expect(classifyFailure(2)).toBe("grader");
+  expect(classifyFailure(2, "agent ran fine")).toBe("grader");
 });
 
 test("classifyFailure: tool for unknown-tool/schema", () => {

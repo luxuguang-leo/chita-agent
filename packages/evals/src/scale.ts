@@ -84,26 +84,37 @@ export function splitHoldout(cases: EvalCase[]): { train: EvalCase[]; holdout: E
   return { train, holdout };
 }
 
-/** Classify a failure to a taxonomy category (Model-or-Harness-ScaleAI). */
+/**
+ * Classify a failure to a taxonomy category (Model-or-Harness-ScaleAI).
+ *
+ * Exit-code convention (M4):
+ * - verifier exit 1 = assertion failed (agent did wrong thing OR verifier
+ *   too strict — reviewer confirms; default 'model')
+ * - verifier exit 2 = verifier crash / infra error -> 'grader' (NOT model;
+ *   Cursor F2: verifier failures must not be blamed on the agent)
+ * - agent errors surface harness (permission/mode) or env (network)
+ */
 export function classifyFailure(
   verifierExit: number,
   agentError?: string,
   toolErrors?: string[]
 ): FailureCategory {
   if (verifierExit === 0) return "unknown"; // passed, nothing to classify
+  if (verifierExit === 2) return "grader"; // verifier crashed — infra, not agent
   if (agentError) {
     const e = agentError.toLowerCase();
-    if (e.includes("permission") || e.includes("blocked") || e.includes("mode")) return "harness";
-    if (e.includes("did not finish") || e.includes("error")) return "harness";
+    // narrow: only explicit control-flow signals are harness, not bare "error"
+    if (e.includes("permission") || e.includes("blocked") || e.includes("plan mode")) return "harness";
+    if (e.includes("did not finish")) return "harness";
   }
   if (toolErrors && toolErrors.length > 0) {
     const t = toolErrors.join(" ").toLowerCase();
-    if (t.includes("not found") || t.includes("econnreset") || t.includes("timeout")) return "env";
-    if (t.includes("unknown tool") || t.includes("schema")) return "tool";
+    if (t.includes("econnreset") || t.includes("timeout") || t.includes("network")) return "env";
+    if (t.includes("unknown tool") || t.includes("schema") || t.includes("malformed")) return "tool";
     return "tool";
   }
-  // verifier failed after a DONE agent run: could be model (did wrong thing)
-  // or grader (verifier too strict) — default to model, reviewer confirms
+  // verifier exit 1 after a DONE agent run: model did wrong thing OR verifier
+  // too strict — default model, reviewer confirms
   return "model";
 }
 

@@ -89,7 +89,8 @@ const LAYER_PRIORITY: MemoryLayer[] = ["tasks", "checkpoint", "notes", "memory"]
 
 /**
  * Budgeted injection (MiMo): inject memory layers up to a token budget,
- * most important first. Returns what was included.
+ * most important first. An oversized layer is SKIPPED (not a hard stop) —
+ * smaller lower-priority layers can still fit (Cursor F3).
  */
 export function injectMemory(repoRoot: string, budgetTokens: number): MemoryInjection {
   const injected: MemoryLayer[] = [];
@@ -98,7 +99,7 @@ export function injectMemory(repoRoot: string, budgetTokens: number): MemoryInje
     const content = readLayer(repoRoot, layer);
     if (!content.trim()) continue;
     const t = estimateTokens(content);
-    if (tokens + t > budgetTokens) break; // budget exhausted
+    if (tokens + t > budgetTokens) continue; // skip oversized, try next
     tokens += t;
     injected.push(layer);
   }

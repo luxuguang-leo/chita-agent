@@ -42,19 +42,27 @@ test("runJudge: streams reply through provider", async () => {
 });
 
 test("JudgeBudget: max per session enforced", () => {
-  const budget = new JudgeBudget({ maxPerSession: 2 });
-  expect(budget.canInvoke(1000)).toBe(true);
-  budget.record(1000);
-  expect(budget.canInvoke(1000)).toBe(true);
-  budget.record(1000);
-  expect(budget.canInvoke(1000)).toBe(false); // 3rd blocked
+  const budget = new JudgeBudget({ maxPerSession: 2, turnThrottle: 0 });
+  expect(budget.canInvoke(1000, 0.3, 1)).toBe(true);
+  budget.record(1000, 1);
+  expect(budget.canInvoke(1000, 0.3, 11)).toBe(true);
+  budget.record(1000, 11);
+  expect(budget.canInvoke(1000, 0.3, 21)).toBe(false); // 3rd blocked
   expect(budget.invokedCount()).toBe(2);
 });
 
+test("JudgeBudget: turn throttle blocks early re-invoke", () => {
+  const budget = new JudgeBudget({ maxPerSession: 5, turnThrottle: 10 });
+  expect(budget.canInvoke(1000, 0.3, 5)).toBe(true);
+  budget.record(1000, 5);
+  expect(budget.canInvoke(1000, 0.3, 10)).toBe(false); // <10 turns since last
+  expect(budget.canInvoke(1000, 0.3, 15)).toBe(true); // 10 turns passed
+});
+
 test("JudgeBudget: monthly budget cap", () => {
-  const budget = new JudgeBudget({ monthlyBudgetUsd: 1 });
+  const budget = new JudgeBudget({ monthlyBudgetUsd: 1, turnThrottle: 0 });
   // 3M tokens @ $0.3/M = $0.9 < $1 -> ok; next 1M = $1.2 > $1 -> blocked
-  expect(budget.canInvoke(3_000_000)).toBe(true);
-  budget.record(3_000_000);
-  expect(budget.canInvoke(1_000_000)).toBe(false);
+  expect(budget.canInvoke(3_000_000, 0.3, 1)).toBe(true);
+  budget.record(3_000_000, 1);
+  expect(budget.canInvoke(1_000_000, 0.3, 2)).toBe(false);
 });
