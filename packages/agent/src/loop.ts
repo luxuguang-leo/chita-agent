@@ -17,6 +17,7 @@
 import { ToolRegistry, ToolContext } from "../../tools/src/index.ts";
 import { registerBuiltinTools } from "../../tools/src/builtin.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
+import { ContextManager } from "./context.ts";
 
 export type LoopState = "IDLE" | "THINKING" | "TOOL_CALL" | "OBSERVING" | "DONE" | "ERROR" | "CANCELLED" | "WAITING_USER";
 
@@ -58,6 +59,9 @@ export interface LoopOptions {
   hooks?: LoopHooks;
   maxIterations?: number;
   maxTokens?: number;
+  /** M1 --print dev mode: auto-approve ask-level tools (write/bash) without a prompt.
+   *  (v2.1 §2.3; WAITING_USER interactive approval is M1.5+) */
+  autoApproveAsk?: boolean;
 }
 
 const DEFAULT_MAX_ITERATIONS = 50;
@@ -71,6 +75,7 @@ export class AgentLoop {
   private iterations = 0;
   private tokensUsed = 0;
   private opts: LoopOptions;
+  private contextManager: ContextManager;
 
   constructor(opts: LoopOptions) {
     this.opts = opts;
@@ -81,6 +86,9 @@ export class AgentLoop {
     } else {
       this.tools = opts.tools;
     }
+    this.contextManager = new ContextManager({
+      maxTokens: opts.maxTokens,
+    });
   }
   private tools: ToolRegistry;
 
@@ -114,6 +122,22 @@ export class AgentLoop {
       let gotDone = false;
       let summary: string | undefined;
 
+      // Context management (v2.1 §2.4): truncate before hitting the provider
+      const { messages: kept, report } = this.contextManager.truncate(this.messages);
+      if (report.truncated) {
+        this.messages = kept;
+        // observability: system note to the model + trace event (v2.1 §2.4)
+        this.messages.push({ role: "system", content: report.note ?? "" });
+        this.opts.hooks?.onEvent?.({
+          seq: this.iterations,
+          type: "context_truncated",
+          droppedMessages: report.droppedMessages,
+          droppedTokens: report.droppedTokens,
+          ts: new Date().toISOString(),
+        });
+        this.contextManager.resetOverflow();
+      }
+
       for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined })) {
         if (ev.kind === "message" && ev.message) {
           this.messages.push(ev.message);
@@ -128,6 +152,13 @@ export class AgentLoop {
             name: ev.toolName,
             content: result.ok ? (result.output ?? "") : `ERROR: ${result.error ?? ""}`,
           });
+          // done tool hard gate (v2.1 §2.2): a SUCCESSFUL done tool call
+          // transitions to DONE — regardless of Provider event kind.
+          if (ev.toolName === "done" && result.ok) {
+            gotDone = true;
+            summary = String(ev.args?.summary ?? "");
+            break;
+          }
         } else if (ev.kind === "done") {
           gotDone = true;
           summary = ev.summary;
@@ -174,6 +205,11 @@ export class AgentLoop {
     // Read-only tools default allow; ask stays ask for the hook to decide
     const tool = this.tools.get(name);
     if (tool) ctx.permission = tool.defaultPermission;
+
+    // M1 --print dev mode: auto-approve ask-level tools (v2.1 §2.3)
+    if (this.opts.autoApproveAsk && ctx.permission === "ask") {
+      ctx.permission = "allow";
+    }
 
     // Permission hook
     if (this.opts.hooks?.beforeToolCall) {

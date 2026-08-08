@@ -43,6 +43,7 @@ export class Tape {
   private locked = false;
   private root: string;
   private lockPath: string | null = null;
+  private lockFd: number | null = null;
 
   private constructor(paths: TapePaths, fd: number, root: string) {
     this.paths = paths;
@@ -59,30 +60,32 @@ export class Tape {
     mkdirSync(paths.dir, { recursive: true });
     const fd = openSync(paths.tape, "a+");
 
-    // Exclusive advisory lock. Prefer flock; fall back to a lock file.
     const tape = new Tape(paths, fd, root);
     const lockPath = paths.tape + ".lock";
-    let flockOk = false;
-    try {
-      const { lockSync } = require("node:fs");
-      if (typeof lockSync === "function") {
-        lockSync(fd);
-        flockOk = true;
-      }
-    } catch {
-      flockOk = false;
-    }
-    if (!flockOk) {
-      // Lock-file fallback: wx fails if the lock already exists -> concurrent open
+
+    // Lock strategy: lock file with pid content. wx fails if it exists;
+    // if it exists but the pid is dead (stale from a crash), take it over.
+    // The lock fd is HELD until close() so the file cannot be recreated
+    // under us between unlink and re-create (Cursor F5).
+    let lockFd: number | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const lockFd = openSync(lockPath, "wx");
-        closeSync(lockFd);
-        tape.lockPath = lockPath;
-      } catch {
+        lockFd = openSync(lockPath, "wx");
+        writeSync(lockFd, String(process.pid));
+        break;
+      } catch (e) {
+        // lock exists — check for staleness (dead pid)
+        const stale = isStaleLock(lockPath);
+        if (stale && attempt === 0) {
+          rmSync(lockPath, { force: true });
+          continue;
+        }
         closeSync(fd);
         throw new Error(`session ${sessionId} is locked by another process (${lockPath})`);
       }
     }
+    tape.lockPath = lockPath;
+    tape.lockFd = lockFd;
     tape.locked = true;
 
     // Seed seq from existing lines (resume)
@@ -158,7 +161,8 @@ export class Tape {
     }
   }
 
-  /** Crash marker: mid-ToolCall recovery (v2.1 §2.7) */
+  /** Crash marker: mid-ToolCall recovery (v2.1 §2.7).
+   *  Emits both an error event (trace) and a tool_result the model can see. */
   markCrashed(toolName: string): void {
     this.append({
       type: "error",
@@ -167,10 +171,26 @@ export class Tape {
       message: `[tool crashed mid-execution; no output] (${toolName})`,
       faultSide: "tool",
     } as unknown as Omit<TraceEvent, "seq" | "ts">);
+    this.append({
+      type: "tool_result",
+      toolName,
+      ok: false,
+      output: "[tool crashed mid-execution; no output]",
+      error: "crashed",
+      faultSide: "tool",
+    } as unknown as Omit<TraceEvent, "seq" | "ts">);
   }
 
   close(): void {
     if (this.fd !== undefined) closeSync(this.fd);
+    if (this.lockFd !== null) {
+      try {
+        closeSync(this.lockFd);
+      } catch {
+        // best effort
+      }
+      this.lockFd = null;
+    }
     if (this.lockPath) {
       try {
         rmSync(this.lockPath, { force: true });
@@ -179,5 +199,24 @@ export class Tape {
       }
       this.lockPath = null;
     }
+  }
+}
+
+/**
+ * Stale lock detection: a lock file is stale when its pid is not alive.
+ * Crash leaves a lock file behind; the next open takes it over (Cursor F5).
+ */
+function isStaleLock(lockPath: string): boolean {
+  try {
+    const pid = Number(readFileSync(lockPath, "utf-8").trim());
+    if (!Number.isInteger(pid) || pid <= 0) return true; // corrupt -> stale
+    try {
+      process.kill(pid, 0); // throws if the process does not exist
+      return false; // alive -> held
+    } catch {
+      return true; // dead -> stale
+    }
+  } catch {
+    return true; // unreadable/corrupt -> stale
   }
 }

@@ -54,7 +54,7 @@ export const writeTool: Tool = {
 
 export const bashTool: Tool = {
   name: "bash",
-  description: "Run a shell command (temporary dir + timeout + output truncation).",
+  description: "Run a shell command (timeout + output truncation).",
   parameters: {
     type: "object",
     properties: { command: { type: "string" }, timeoutMs: { type: "number" } },
@@ -62,6 +62,8 @@ export const bashTool: Tool = {
   },
   defaultPermission: "ask",
   execute(args, ctx: ToolContext): ToolResult {
+    // NOTE: runs in ctx.cwd directly. A temporary sandbox dir (isolated tmp
+    // workspace) is a M1.5 item — v2.1 §2.3 (Cursor F7).
     const command = String(args.command ?? "");
     const timeoutMs = Number(args.timeoutMs ?? 10000);
     if (!command) return { ok: false, error: "command required" };
@@ -169,7 +171,7 @@ export const globTool: Tool = {
 
 export const gitTool: Tool = {
   name: "git",
-  description: "Read-only git operations: status / diff / log (decision #5: writes go through bash + permission).",
+  description: "Read-only git operations: status / diff / log / show (decision #5: writes go through bash + permission).",
   parameters: {
     type: "object",
     properties: { args: { type: "string" } },
@@ -177,11 +179,18 @@ export const gitTool: Tool = {
   },
   defaultPermission: "allow",
   execute(args, ctx: ToolContext): ToolResult {
-    const sub = String(args.args ?? "");
-    // Read-only guard: only allow safe subcommands in M1 (v2.1 decision #5)
-    if (!/^(status|diff|log|show|branch)\b/.test(sub)) {
-      return { ok: false, error: `git write ops go through bash in M1; allowed: status/diff/log/show/branch (got: ${sub})` };
+    const sub = String(args.args ?? "").trim();
+
+    // Read-only guard (v2.1 decision #5). Reject:
+    // - shell metacharacters (command injection via `git ${sub}`)
+    // - write subcommands (commit/push/add/rm/reset/checkout/branch -D etc.)
+    if (/[;&|`$()<>]/.test(sub)) {
+      return { ok: false, error: `git args contain shell metacharacters (blocked): ${sub}` };
     }
+    if (!/^(status|diff|log|show)\b/.test(sub)) {
+      return { ok: false, error: `git write ops go through bash in M1; allowed: status/diff/log/show (got: ${sub})` };
+    }
+    // branch removed from M1 whitelist (Cursor F4: branch -D is destructive)
     try {
       const out = execSync(`git ${sub}`, {
         cwd: ctx.cwd,

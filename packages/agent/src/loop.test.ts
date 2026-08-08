@@ -113,6 +113,33 @@ test("maxIterations cap stops runaway loop", async () => {
   expect(result.state).toBe("ERROR");
 });
 
+test("done tool hard gate: real done TOOL CALL transitions to DONE (F1 fix)", async () => {
+  // The LLM calls the `done` tool through the registry — NOT a provider `done` event.
+  const script: StreamEvent[][] = [
+    [{ kind: "tool_call", toolName: "done", args: { summary: "finished via tool" } }],
+  ];
+  const { loop } = makeLoop(() => script);
+  const result = await loop.run("do the thing");
+  expect(result.state).toBe("DONE");
+  expect(result.summary).toBe("finished via tool");
+});
+
+test("done tool failing does NOT transition to DONE", async () => {
+  // done called with missing permission/blocked -> not ok -> loop continues
+  let turns = 0;
+  const script: StreamEvent[][] = [
+    [{ kind: "tool_call", toolName: "done", args: { summary: "x" } }],
+    [{ kind: "done", summary: "real finish" }],
+  ];
+  const hooks = {
+    beforeToolCall: async (name: string) => name !== "done", // block done
+  };
+  const loop = new AgentLoop({ cwd: "/tmp", provider: new FakeProvider(() => script), hooks });
+  const result = await loop.run("task");
+  expect(result.state).toBe("DONE"); // via provider done on turn 2
+  expect(result.summary).toBe("real finish");
+});
+
 test("builtin tools registered by default", () => {
   const registry = new ToolRegistry();
   registerBuiltinTools(registry);
