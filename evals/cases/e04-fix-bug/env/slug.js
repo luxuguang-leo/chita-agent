@@ -1,9 +1,9 @@
-// Intentionally buggy: spaces become underscores, consecutive spaces not merged
+// Fixed: spaces become hyphens, consecutive spaces merged
 export function slugify(s) {
   return s
     .trim()
     .toLowerCase()
-    .replace(/\s+/g, "_"); // bug: should be "-", and consecutive spaces are not merged
+    .replace(/\s+/g, "-"); // fixed: should be "-", merging consecutive spaces
 }
 
 if (import.meta.main) {

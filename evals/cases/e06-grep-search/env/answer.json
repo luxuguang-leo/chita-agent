@@ -1,0 +1,4 @@
+{
+  "definitionFile": "lib.js",
+  "callerFiles": ["order.js", "cart.js"]
+}
