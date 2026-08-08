@@ -14,7 +14,7 @@
  * - Provider abstraction: chat() streams events; the loop drives it
  */
 
-import { ToolRegistry, ToolContext } from "../../tools/src/index.ts";
+import { ToolRegistry, ToolContext, ToolResult } from "../../tools/src/index.ts";
 import { registerBuiltinTools } from "../../tools/src/builtin.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
 import { ContextManager } from "./context.ts";
@@ -59,6 +59,8 @@ export interface LoopHooks {
   onSessionEnd?(state: LoopState, summary?: string): void;
 }
 
+export type LoopMode = "build" | "plan";
+
 export interface LoopOptions {
   cwd: string;
   provider: Provider;
@@ -69,6 +71,9 @@ export interface LoopOptions {
   /** M1 --print dev mode: auto-approve ask-level tools (write/bash) without a prompt.
    *  (v2.1 §2.3; WAITING_USER interactive approval is M1.5+) */
   autoApproveAsk?: boolean;
+  /** build: full execution (default). plan: read-only analysis —
+   *  write tools forbidden, bash requires explicit approval (opencode build/plan). */
+  mode?: LoopMode;
 }
 
 const DEFAULT_MAX_ITERATIONS = 50;
@@ -217,15 +222,22 @@ export class AgentLoop {
     const tool = this.tools.get(name);
     if (tool) ctx.permission = tool.defaultPermission;
 
+    // Plan mode (opencode build/plan): write tools forbidden, bash requires
+    // explicit approval — never auto-approved (v2.1 §2.3)
+    const WRITE_TOOLS: Record<string, true> = { write: true, bash: true, git: true };
+    if (this.opts.mode === "plan" && WRITE_TOOLS[name]) {
+      return this.emitToolResult(name, { ok: false, error: `blocked by plan mode (read-only analysis): ${name}` });
+    }
+
     // M1 --print dev mode: auto-approve ask-level tools (v2.1 §2.3)
-    if (this.opts.autoApproveAsk && ctx.permission === "ask") {
+    if (this.opts.autoApproveAsk && ctx.permission === "ask" && this.opts.mode !== "plan") {
       ctx.permission = "allow";
     }
 
     // Permission hook
     if (this.opts.hooks?.beforeToolCall) {
       const ok = await this.opts.hooks.beforeToolCall(name, args, ctx);
-      if (!ok) return { ok: false, error: `blocked by beforeToolCall: ${name}` };
+      if (!ok) return this.emitToolResult(name, { ok: false, error: `blocked by beforeToolCall: ${name}` });
     }
 
     const result = await this.tools.execute(name, args, ctx);
@@ -237,18 +249,22 @@ export class AgentLoop {
       const scrubbed = this.opts.hooks.afterToolCall(name, result);
       if (scrubbed) finalResult = { ...result, ...scrubbed };
     }
+    return this.emitToolResult(name, finalResult);
+  }
 
+  /** Emit a tool_result trace event and return the result (single choke point) */
+  private emitToolResult(name: string, result: ToolResult): ToolResult {
     this.opts.hooks?.onEvent?.({
       seq: this.iterations,
       type: "tool_result",
       toolName: name,
-      ok: finalResult.ok,
-      output: finalResult.output,
-      error: finalResult.error,
-      truncated: finalResult.truncated,
+      ok: result.ok,
+      output: result.output,
+      error: result.error,
+      truncated: result.truncated,
       ts: new Date().toISOString(),
     });
-    return finalResult;
+    return result;
   }
 
   /** Current conversation (for resume / trace) */
