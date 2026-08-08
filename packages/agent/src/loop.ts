@@ -1,0 +1,202 @@
+/**
+ * chita agent loop (v2.1 §2.2)
+ *
+ * State machine: IDLE → THINKING → TOOL_CALL → OBSERVING → THINKING → ... → DONE
+ *              + ERROR / CANCELLED / WAITING_USER
+ *
+ * - done tool hard gate: only a successful done() call transitions to DONE;
+ *   pure final text does NOT terminate — the loop injects
+ *   "please call done, or continue using tools"
+ * - steering: a message inserted between turns ("change direction",
+ *   "don't touch that file yet")
+ * - follow-up: a task appended when the agent was about to stop
+ *   ("run the tests when you finish")
+ * - Provider abstraction: chat() streams events; the loop drives it
+ */
+
+import { ToolRegistry, ToolContext } from "../../tools/src/index.ts";
+import { registerBuiltinTools } from "../../tools/src/builtin.ts";
+import type { TraceEvent } from "../../session/src/trace.ts";
+
+export type LoopState = "IDLE" | "THINKING" | "TOOL_CALL" | "OBSERVING" | "DONE" | "ERROR" | "CANCELLED" | "WAITING_USER";
+
+export type ChatRole = "user" | "assistant" | "tool" | "reasoning" | "system";
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+  /** Tool call name (role=tool) */
+  name?: string;
+}
+
+export interface StreamEvent {
+  kind: "message" | "tool_call" | "tool_result" | "done";
+  message?: ChatMessage;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  result?: { ok: boolean; output?: string; error?: string };
+  summary?: string;
+  usage?: { tokens: number };
+}
+
+export interface Provider {
+  chat(messages: ChatMessage[], opts?: { signal?: AbortSignal }): AsyncIterable<StreamEvent>;
+}
+
+export interface LoopHooks {
+  /** Permission/audit interception (v2.1 §2.3) */
+  beforeToolCall?(toolName: string, args: Record<string, unknown>, ctx: ToolContext): Promise<boolean>;
+  /** Called after each completed turn (for trace recording) */
+  onEvent?(event: TraceEvent): void;
+  /** Called on every streamed assistant message (UI/trace) */
+  onAssistantMessage?(msg: ChatMessage): void;
+}
+
+export interface LoopOptions {
+  cwd: string;
+  provider: Provider;
+  tools?: ToolRegistry;
+  hooks?: LoopHooks;
+  maxIterations?: number;
+  maxTokens?: number;
+}
+
+const DEFAULT_MAX_ITERATIONS = 50;
+const DEFAULT_MAX_TOKENS = 1_000_000;
+
+export class AgentLoop {
+  state: LoopState = "IDLE";
+  private messages: ChatMessage[] = [];
+  private steers: string[] = [];
+  private followUps: string[] = [];
+  private iterations = 0;
+  private tokensUsed = 0;
+  private opts: LoopOptions;
+
+  constructor(opts: LoopOptions) {
+    this.opts = opts;
+    if (!opts.tools) {
+      const registry = new ToolRegistry();
+      registerBuiltinTools(registry);
+      this.tools = registry;
+    } else {
+      this.tools = opts.tools;
+    }
+  }
+  private tools: ToolRegistry;
+
+  /** Inject a steering message (between turns). No-op once DONE. */
+  steer(text: string): void {
+    if (this.state === "DONE" || this.state === "CANCELLED" || this.state === "ERROR") return;
+    this.steers.push(text);
+  }
+
+  /** Append a follow-up task (when the agent was about to stop). */
+  followUp(text: string): void {
+    if (this.state === "DONE" || this.state === "CANCELLED" || this.state === "ERROR") return;
+    this.followUps.push(text);
+  }
+
+  async run(initialTask: string): Promise<{ state: LoopState; summary?: string }> {
+    this.state = "THINKING";
+    this.messages = [{ role: "user", content: initialTask }];
+
+    const maxIter = this.opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    const maxTokens = this.opts.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+    while (this.iterations < maxIter && this.tokensUsed < maxTokens) {
+      // Drain steering messages first
+      if (this.steers.length > 0) {
+        const steer = this.steers.shift()!;
+        this.messages.push({ role: "system", content: `[steer] ${steer}` });
+      }
+
+      this.state = "THINKING";
+      let gotDone = false;
+      let summary: string | undefined;
+
+      for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined })) {
+        if (ev.kind === "message" && ev.message) {
+          this.messages.push(ev.message);
+          this.opts.hooks?.onAssistantMessage?.(ev.message);
+        } else if (ev.kind === "tool_call" && ev.toolName) {
+          this.state = "TOOL_CALL";
+          const result = await this.runTool(ev.toolName, ev.args ?? {});
+          this.state = "OBSERVING";
+          // tool result back to the model as a tool message
+          this.messages.push({
+            role: "tool",
+            name: ev.toolName,
+            content: result.ok ? (result.output ?? "") : `ERROR: ${result.error ?? ""}`,
+          });
+        } else if (ev.kind === "done") {
+          gotDone = true;
+          summary = ev.summary;
+          break;
+        }
+        if (ev.usage?.tokens) this.tokensUsed += ev.usage.tokens;
+      }
+
+      this.iterations++;
+
+      // done tool hard gate: only done() transitions to DONE
+      if (gotDone) {
+        this.state = "DONE";
+        return { state: this.state, summary };
+      }
+
+      // Pure final text without done: inject the gate message and continue
+      if (!gotDone && !this.hasPendingToolCalls()) {
+        const followUp = this.followUps.shift();
+        if (followUp) {
+          this.messages.push({ role: "system", content: `[follow-up] ${followUp}` });
+        } else {
+          this.messages.push({
+            role: "system",
+            content:
+              "You appear to be done, but you must call the `done` tool with a summary to finish. Continue working or call done.",
+          });
+        }
+      }
+    }
+
+    this.state = this.tokensUsed >= maxTokens ? "ERROR" : "DONE";
+    if (this.iterations >= maxIter) this.state = "ERROR";
+    return { state: this.state };
+  }
+
+  private hasPendingToolCalls(): boolean {
+    const last = this.messages[this.messages.length - 1];
+    return last?.role === "tool";
+  }
+
+  private async runTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output?: string; error?: string }> {
+    const ctx: ToolContext = { cwd: this.opts.cwd, permission: "ask" };
+    // Read-only tools default allow; ask stays ask for the hook to decide
+    const tool = this.tools.get(name);
+    if (tool) ctx.permission = tool.defaultPermission;
+
+    // Permission hook
+    if (this.opts.hooks?.beforeToolCall) {
+      const ok = await this.opts.hooks.beforeToolCall(name, args, ctx);
+      if (!ok) return { ok: false, error: `blocked by beforeToolCall: ${name}` };
+    }
+
+    const result = await this.tools.execute(name, args, ctx);
+    this.opts.hooks?.onEvent?.({
+      seq: this.iterations,
+      type: "tool_result",
+      toolName: name,
+      ok: result.ok,
+      output: result.output,
+      error: result.error,
+      truncated: result.truncated,
+      ts: new Date().toISOString(),
+    });
+    return result;
+  }
+
+  /** Current conversation (for resume / trace) */
+  getConversation(): ChatMessage[] {
+    return this.messages;
+  }
+}
