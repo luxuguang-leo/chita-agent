@@ -65,6 +65,26 @@ test("compact: falls back to truncate when too few messages", () => {
   expect(kept.some((m) => m.content.includes("# Session Summary"))).toBe(false);
 });
 
+test("compact: newest does not start with orphan tool (pair boundary, F2)", () => {
+  const cm = new ContextManager({ maxTokens: 400, thresholdRatio: 0.9 }); // threshold 360
+  const messages: ChatMessage[] = [
+    { role: "user", content: "TASK" },
+    ...Array.from({ length: 25 }, (_, i) => ({
+      role: (i % 3 === 0 ? "assistant" : "tool") as "assistant" | "tool",
+      content: `step ${i} ` + "content ".repeat(5), // ~50 chars each
+    })),
+  ];
+  const { messages: kept } = cm.compact(messages);
+  const newest = kept.slice(1); // after task
+  const firstNew = newest.find((m) => !m.content.includes("# Session Summary"));
+  // the first non-summary message in the kept tail must NOT be an orphan tool
+  if (firstNew?.role === "tool") {
+    // find its preceding assistant — must exist in kept
+    const idx = kept.indexOf(firstNew);
+    expect(idx > 0 && kept[idx - 1].role === "assistant").toBe(true);
+  }
+});
+
 test("compact: below threshold is a no-op", () => {
   const cm = new ContextManager({ maxTokens: 10000, thresholdRatio: 0.9 });
   const messages = longConversation(5);

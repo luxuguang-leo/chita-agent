@@ -19,15 +19,17 @@ export interface ScrubResult {
   redacted: boolean;
 }
 
-/** Replace secret-looking substrings with [REDACTED]. */
+/** Replace secret-looking substrings with [REDACTED].
+ *  Note: each pattern is applied with a fresh replace; the g-flag lastIndex
+ *  pitfall (test() advancing lastIndex before replace) is avoided by never
+ *  calling test() on the shared global regexes (Cursor F1). */
 export function scrubSecrets(text: string): ScrubResult {
   let redacted = false;
   let out = text;
   for (const re of SECRET_PATTERNS) {
-    if (re.test(out)) {
-      redacted = true;
-      out = out.replace(re, "[REDACTED]");
-    }
+    const next = out.replace(re, "[REDACTED]");
+    if (next !== out) redacted = true;
+    out = next;
   }
   return { text: out, redacted };
 }

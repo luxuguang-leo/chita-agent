@@ -141,6 +141,7 @@ export class AgentLoop {
           type: "context_truncated",
           droppedMessages: report.droppedMessages,
           droppedTokens: report.droppedTokens,
+          mode: report.mode ?? "truncate",
           ts: new Date().toISOString(),
         });
         this.contextManager.resetOverflow();

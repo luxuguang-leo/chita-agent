@@ -26,6 +26,8 @@ export interface TruncationReport {
   droppedMessages: number;
   droppedTokens: number;
   note: string | null;
+  /** compact (six-section summary) vs truncate (plain drop) — Cursor F5 */
+  mode?: "compact" | "truncate";
 }
 
 const MAX_TOKENS_DEFAULT = 1_000_000;
@@ -88,7 +90,7 @@ export class ContextManager {
   truncate(messages: ChatMessage[]): { messages: ChatMessage[]; report: TruncationReport } {
     const total = estimateMessagesTokens(messages);
     if (total <= this.threshold) {
-      return { messages, report: { truncated: false, droppedMessages: 0, droppedTokens: 0, note: null } };
+      return { messages, report: { truncated: false, droppedMessages: 0, droppedTokens: 0, note: null, mode: "truncate" } };
     }
 
     // Drop from the front, keeping the first (user task) message always
@@ -124,7 +126,7 @@ export class ContextManager {
     const note = `[context truncated: dropped ${droppedMessages} messages / ~${droppedTokens} tokens]`;
     return {
       messages: result,
-      report: { truncated: true, droppedMessages, droppedTokens, note },
+      report: { truncated: true, droppedMessages, droppedTokens, note, mode: "truncate" },
     };
   }
 
@@ -138,15 +140,24 @@ export class ContextManager {
   compact(messages: ChatMessage[]): { messages: ChatMessage[]; report: TruncationReport } {
     const total = estimateMessagesTokens(messages);
     if (total <= this.threshold) {
-      return { messages, report: { truncated: false, droppedMessages: 0, droppedTokens: 0, note: null } };
+      return { messages, report: { truncated: false, droppedMessages: 0, droppedTokens: 0, note: null, mode: "compact" } };
     }
 
     // Keep: task (first user msg) + newest messages within a budget
     // Summarize: everything in between
     const keptCount = Math.min(8, messages.length - 2); // task + summary + newest few
     const oldest = messages.slice(0, 1); // user task — always kept verbatim
-    const summarizeMe = messages.slice(1, Math.max(2, messages.length - keptCount));
-    const newest = messages.slice(Math.max(2, messages.length - keptCount));
+    let cutIdx = Math.max(2, messages.length - keptCount);
+
+    // Pair invariant (v2.1 §2.4, Cursor F2): newest must not start with an
+    // orphan tool_result — pull its matching assistant call forward.
+    let newest = messages.slice(cutIdx);
+    while (newest.length > 0 && newest[0].role === "tool" && cutIdx > 2) {
+      cutIdx--;
+      newest = messages.slice(cutIdx);
+    }
+
+    const summarizeMe = messages.slice(1, cutIdx);
 
     if (summarizeMe.length < 2) {
       // not enough to summarize meaningfully — fall back to truncate
@@ -170,6 +181,7 @@ export class ContextManager {
         droppedMessages: summarizeMe.length,
         droppedTokens: Math.max(0, droppedTokens),
         note,
+        mode: "compact",
       },
     };
   }

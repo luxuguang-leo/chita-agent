@@ -122,6 +122,8 @@ export interface ContextTruncatedEvent extends TraceEventBase {
   droppedMessages: number;
   /** Estimated dropped tokens */
   droppedTokens: number;
+  /** Whether this was a six-section compaction or a plain truncate (Cursor F5) */
+  mode?: "compact" | "truncate";
 }
 
 /** Error event (v2.1 §2.4 error layering) */
