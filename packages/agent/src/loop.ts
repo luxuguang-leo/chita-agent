@@ -46,10 +46,17 @@ export interface Provider {
 export interface LoopHooks {
   /** Permission/audit interception (v2.1 §2.3) */
   beforeToolCall?(toolName: string, args: Record<string, unknown>, ctx: ToolContext): Promise<boolean>;
+  /** Post-execution interception: can rewrite/scrub the result (v2.1 F4 redaction) */
+  afterToolCall?(
+    toolName: string,
+    result: { ok: boolean; output?: string; error?: string }
+  ): { ok: boolean; output?: string; error?: string } | void;
   /** Called after each completed turn (for trace recording) */
   onEvent?(event: TraceEvent): void;
   /** Called on every streamed assistant message (UI/trace) */
   onAssistantMessage?(msg: ChatMessage): void;
+  /** Called when the loop reaches DONE/ERROR/CANCELLED (M1.5 session_end hook) */
+  onSessionEnd?(state: LoopState, summary?: string): void;
 }
 
 export interface LoopOptions {
@@ -173,6 +180,7 @@ export class AgentLoop {
       // done tool hard gate: only done() transitions to DONE
       if (gotDone) {
         this.state = "DONE";
+        this.opts.hooks?.onSessionEnd?.(this.state, summary);
         return { state: this.state, summary };
       }
 
@@ -193,6 +201,7 @@ export class AgentLoop {
 
     this.state = this.tokensUsed >= maxTokens ? "ERROR" : "DONE";
     if (this.iterations >= maxIter) this.state = "ERROR";
+    this.opts.hooks?.onSessionEnd?.(this.state);
     return { state: this.state };
   }
 
@@ -219,17 +228,26 @@ export class AgentLoop {
     }
 
     const result = await this.tools.execute(name, args, ctx);
+
+    // afterToolCall hook: scrub/rewrite the result before it reaches the
+    // model (v2.1 F4 redaction; audit of sensitive output)
+    let finalResult = result;
+    if (this.opts.hooks?.afterToolCall) {
+      const scrubbed = this.opts.hooks.afterToolCall(name, result);
+      if (scrubbed) finalResult = { ...result, ...scrubbed };
+    }
+
     this.opts.hooks?.onEvent?.({
       seq: this.iterations,
       type: "tool_result",
       toolName: name,
-      ok: result.ok,
-      output: result.output,
-      error: result.error,
-      truncated: result.truncated,
+      ok: finalResult.ok,
+      output: finalResult.output,
+      error: finalResult.error,
+      truncated: finalResult.truncated,
       ts: new Date().toISOString(),
     });
-    return result;
+    return finalResult;
   }
 
   /** Current conversation (for resume / trace) */
