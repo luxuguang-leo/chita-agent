@@ -33,6 +33,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@chita/agent": "0.0.0",
+        "@chita/ai": "0.0.0",
         "@chita/session": "0.0.0",
         "@chita/tools": "0.0.0",
       },

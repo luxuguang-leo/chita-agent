@@ -14,7 +14,7 @@
 import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execSync } from "node:child_process";
-import { AgentLoop, Provider, ChatMessage } from "@chita/agent/src/loop.ts";
+import { AgentLoop, Provider, ChatMessage, LoopHooks } from "@chita/agent/src/loop.ts";
 
 export interface EvalCase {
   id: string;
@@ -70,6 +70,8 @@ export interface RunOptions {
   provider?: Provider;
   only?: string; // comma-separated case ids
   maxIterations?: number;
+  /** Loop hooks (e.g. afterToolCall scrub) applied per case run */
+  hooks?: LoopHooks;
 }
 
 /**
@@ -86,6 +88,8 @@ export async function runEvals(opts: RunOptions): Promise<EvalResult[]> {
         cwd: join(c.dir, "env"),
         provider: opts.provider,
         maxIterations: opts.maxIterations ?? 20,
+        autoApproveAsk: true, // eval runs are sandboxed fixtures — allow write/bash
+        hooks: opts.hooks,
       });
       const outcome = await loop.run(c.instruction);
       if (outcome.state !== "DONE") {
