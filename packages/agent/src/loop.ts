@@ -178,14 +178,31 @@ export class AgentLoop {
       // Provider call with overflow recovery (v2.1 §2.4, Cursor F4):
       // context overflow -> compact -> retry; >3 overflows -> terminate
       let turnDone = false;
+      let pendingAssistant: ChatMessage | null = null;
       while (!turnDone) {
         try {
           for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined, tools: chatTools })) {
             if (ev.kind === "message" && ev.message) {
-              this.messages.push(ev.message);
+              // Streaming fragments: show via hook, accumulate into ONE
+              // conversation message (dedup — turn-end message carries full text)
               this.opts.hooks?.onAssistantMessage?.(ev.message);
+              if (ev.message.toolCalls && ev.message.toolCalls.length > 0) {
+                // turn-end declaration: full assistant message with toolCalls
+                pendingAssistant = ev.message;
+              } else if (ev.message.content) {
+                if (!pendingAssistant) pendingAssistant = { ...ev.message };
+                else {
+                  const acc: ChatMessage = pendingAssistant;
+                  pendingAssistant = { ...acc, content: acc.content + ev.message.content };
+                }
+              }
             } else if (ev.kind === "tool_call" && ev.toolName) {
               this.state = "TOOL_CALL";
+              // flush the assistant message that declared this tool call
+              if (pendingAssistant) {
+                this.messages.push(pendingAssistant);
+                pendingAssistant = null;
+              }
               const result = await this.runTool(ev.toolName, ev.args ?? {});
               this.state = "OBSERVING";
               // tool result back to the model as a tool message (OpenAI requires
@@ -206,9 +223,18 @@ export class AgentLoop {
             } else if (ev.kind === "done") {
               gotDone = true;
               summary = ev.summary;
+              if (pendingAssistant) {
+                this.messages.push(pendingAssistant);
+                pendingAssistant = null;
+              }
               break;
             }
             if (ev.usage?.tokens) this.tokensUsed += ev.usage.tokens;
+          }
+          // flush any remaining assistant text (no tools, no done — gate note next)
+          if (pendingAssistant) {
+            this.messages.push(pendingAssistant);
+            pendingAssistant = null;
           }
           turnDone = true;
         } catch (e) {
@@ -219,14 +245,24 @@ export class AgentLoop {
             const { shouldTerminate } = this.contextManager.overflowRecovery();
             if (shouldTerminate) {
               this.state = "ERROR";
+              this.opts.hooks?.onSessionEnd?.(this.state);
               return { state: this.state };
             }
-            // compact then retry the same turn
-            const { messages: compacted, report } = this.contextManager.compact(this.messages);
-            if (report.truncated) {
-              this.messages = compacted;
-              this.messages.push({ role: "system", content: report.note ?? "" });
+            // flush streamed assistant text so compaction has content (F1×F3)
+            if (pendingAssistant) {
+              this.messages.push(pendingAssistant);
+              pendingAssistant = null;
             }
+            // compact then retry the same turn; if compaction didn't actually
+            // reduce anything, terminate instead of looping on API burn (F3)
+            const { messages: compacted, report } = this.contextManager.compact(this.messages);
+            if (!report.truncated) {
+              this.state = "ERROR";
+              this.opts.hooks?.onSessionEnd?.(this.state);
+              return { state: this.state };
+            }
+            this.messages = compacted;
+            this.messages.push({ role: "system", content: report.note ?? "" });
             continue;
           }
           // Other errors: report and stop (M2 scope; retry/backoff is M4)
@@ -277,9 +313,7 @@ export class AgentLoop {
   private hasPendingToolCalls(): boolean {
     const last = this.messages[this.messages.length - 1];
     return last?.role === "tool";
-  }
-
-  private async runTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output?: string; error?: string }> {
+  }  private async runTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output?: string; error?: string }> {
     const ctx: ToolContext = { cwd: this.opts.cwd, permission: "ask" };
     // Read-only tools default allow; ask stays ask for the hook to decide
     const tool = this.tools.get(name);
@@ -287,8 +321,9 @@ export class AgentLoop {
 
     // Plan mode (opencode build/plan): write tools forbidden, bash requires
     // explicit approval — never auto-approved (v2.1 §2.3)
-    const WRITE_TOOLS: Record<string, true> = { write: true, bash: true, git: true };
-    if (this.opts.mode === "plan" && WRITE_TOOLS[name]) {
+    const WRITE_TOOLS: Record<string, true> = { write: true, bash: true };
+    const isWrite = WRITE_TOOLS[name] || (name === "git" && !isReadOnlyGit(args));
+    if (this.opts.mode === "plan" && isWrite) {
       return this.emitToolResult(name, { ok: false, error: `blocked by plan mode (read-only analysis): ${name}` });
     }
 
@@ -335,4 +370,10 @@ export class AgentLoop {
   getConversation(): ChatMessage[] {
     return this.messages;
   }
+}
+
+/** Plan-mode helper: git is read-only when its subcommand is status/diff/log/show (F5). */
+function isReadOnlyGit(args: Record<string, unknown>): boolean {
+  const sub = String(args.args ?? "").trim();
+  return /^(status|diff|log|show)\b/.test(sub) && !/[;&|`$()<>]/.test(sub);
 }

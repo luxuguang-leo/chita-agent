@@ -11,8 +11,9 @@
  * A case passes only when its verifier exits 0 after the agent's run.
  */
 
-import { readdirSync, existsSync, readFileSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync, mkdtempSync, cpSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { AgentLoop, Provider, ChatMessage, LoopHooks } from "@chita/agent/src/loop.ts";
 
@@ -77,6 +78,10 @@ export interface RunOptions {
 /**
  * Run all cases. With a provider: execute the instruction through the agent,
  * then verify. Without a provider: verify-only against current env state.
+ *
+ * Run mode isolates each case in a fresh tmpdir (copied fixture) — the agent
+ * may modify files; the original fixture stays pristine (Cursor F2 / M0 README
+ * isolation contract). Verification runs against the tmpdir copy.
  */
 export async function runEvals(opts: RunOptions): Promise<EvalResult[]> {
   const cases = discoverCases(opts.root).filter((c) => !opts.only || opts.only.split(",").includes(c.id));
@@ -84,24 +89,50 @@ export async function runEvals(opts: RunOptions): Promise<EvalResult[]> {
 
   for (const c of cases) {
     if (opts.provider) {
-      // Agent cwd = case root (instruction paths reference env/...), not env/ itself
-      const loop = new AgentLoop({
-        cwd: c.dir,
-        provider: opts.provider,
-        maxIterations: opts.maxIterations ?? 20,
-        autoApproveAsk: true, // eval runs are sandboxed fixtures — allow write/bash
-        hooks: opts.hooks,
-      });
-      const outcome = await loop.run(c.instruction);
-      if (outcome.state !== "DONE") {
-        results.push({ id: c.id, verifierExit: null, passed: false, error: `agent did not finish (${outcome.state})` });
-        continue;
+      // Fresh tmpdir copy: fixture isolation (agent can modify, original untouched)
+      const tmp = mkdtempSync(join(tmpdir(), "chita-eval-"));
+      try {
+        cpSync(c.dir, tmp, { recursive: true });
+        const loop = new AgentLoop({
+          cwd: tmp,
+          provider: opts.provider,
+          maxIterations: opts.maxIterations ?? 20,
+          autoApproveAsk: true, // eval runs are sandboxed fixtures — allow write/bash
+          hooks: opts.hooks,
+        });
+        const outcome = await loop.run(c.instruction);
+        if (outcome.state !== "DONE") {
+          results.push({ id: c.id, verifierExit: null, passed: false, error: `agent did not finish (${outcome.state})` });
+          continue;
+        }
+        // verify against the tmpdir copy (agent artifacts live there)
+        const verifierPath = join(tmp, "verifier", "check.ts");
+        const { exit } = runVerifierAt(verifierPath);
+        results.push({ id: c.id, verifierExit: exit, passed: exit === 0 });
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
       }
+    } else {
+      const { exit } = runVerifier(c);
+      results.push({ id: c.id, verifierExit: exit, passed: exit === 0 });
     }
-    const { exit } = runVerifier(c);
-    results.push({ id: c.id, verifierExit: exit, passed: exit === 0 });
   }
   return results;
+}
+
+/** Run a verifier by explicit path (tmpdir copy has different import.meta.dir) */
+function runVerifierAt(verifierPath: string): { exit: number; output: string } {
+  try {
+    const output = execSync(`bun ${verifierPath}`, {
+      timeout: 30000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { exit: 0, output };
+  } catch (e: unknown) {
+    const err = e as { status?: number; stdout?: string; stderr?: string };
+    return { exit: err.status ?? 1, output: String(err.stdout ?? "") + String(err.stderr ?? "") };
+  }
 }
 
 /** Print a compact summary table. */
