@@ -11,7 +11,7 @@ A local terminal coding agent. Single binary, eval-driven, audit-friendly.
 
 ## 状态
 
-✅ **M0-M4 全里程碑完成**（2026-08-09，116/116 测试）——8/8 eval 用真实 DeepSeek 可复现 PASS。
+✅ **M0-M4 全里程碑完成 + M4.5 收尾**（2026-08-09，118/118 测试）——8/8 eval 用真实 DeepSeek 可复现 PASS。
 
 ## 安装（待发布）
 
@@ -28,6 +28,7 @@ export CHITA_API_KEY=...   # DeepSeek (OpenAI-compatible)
 chita init                  # 生成 ~/.chita/config.json
 chita "看看这个项目的入口"    # 运行任务（--print 模式）
 chita --plan "审查这个改动"   # 只读分析（plan 模式，禁写工具）
+chita --judge "修这个 bug"    # 运行 + /goal judge 独立验证（CHITA_JUDGE_MODEL 可指定独立模型）
 chita --version
 ```
 

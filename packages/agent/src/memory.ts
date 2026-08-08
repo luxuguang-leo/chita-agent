@@ -114,9 +114,11 @@ export function injectMemory(repoRoot: string, budgetTokens: number): MemoryInje
 export class RecurrenceGate {
   private seen: Map<string, number>;
   private statsPath: string;
+  private threshold: number;
 
-  constructor(private threshold = 2) {
-    this.statsPath = `${process.env.HOME}/.chita/stats/recurrence.json`;
+  constructor(threshold = 2, statsPath?: string) {
+    this.threshold = threshold;
+    this.statsPath = statsPath ?? `${process.env.HOME}/.chita/stats/recurrence.json`;
     this.seen = this.load();
   }
 

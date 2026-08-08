@@ -72,13 +72,17 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
   // evaluating model is distinct from the working model (Cursor nit: the
   // orchestration layer guarantees this, not the judge module itself).
   if (opts.judge && outcome.state === "DONE") {
+    // /goal judge: SEPARATE provider instance AND separate model — same-model
+    // self-review is optimistically consistent (Cursor F1). CHITA_JUDGE_MODEL
+    // overrides; default to a different, stronger tier.
+    const judgeModel = process.env.CHITA_JUDGE_MODEL ?? (cfg.model === "deepseek-v4-pro" ? "deepseek-v4-flash" : "deepseek-v4-pro");
     const judgeProvider = new OpenAICompatibleProvider({
       baseUrl: `https://api.deepseek.com/v1`,
       apiKey: key,
-      model: cfg.model, // same model family, but independent instance/call
+      model: judgeModel,
     });
     const judgeResult = await runJudge(judgeProvider, loop.getConversation(), task);
-    console.log(`[chita] judge: ${judgeResult.verdict} — ${judgeResult.reason}`);
+    console.log(`[chita] judge (${judgeModel}): ${judgeResult.verdict} — ${judgeResult.reason}`);
     if (judgeResult.verdict === "fail") process.exitCode = 1;
   }
 }

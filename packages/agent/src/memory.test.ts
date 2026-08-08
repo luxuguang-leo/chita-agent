@@ -82,23 +82,23 @@ test("injectMemory: priority order + budget cap", () => {
 });
 
 test("RecurrenceGate: consolidates only on recurrence", () => {
-  const gate = new RecurrenceGate(2);
+  const repo = mkdtempSync(join(tmpdir(), "chita-mem-rg-"));
+  const gate = new RecurrenceGate(2, join(repo, "recurrence.json"));
   expect(gate.observe("fact-a")).toBe(false); // first sighting
   expect(gate.observe("fact-b")).toBe(false);
   expect(gate.observe("fact-a")).toBe(true); // recurrence -> consolidate
+  rmSync(repo, { recursive: true, force: true });
 });
 
 test("RecurrenceGate: persists across instances (M4.5)", () => {
   const repo = mkdtempSync(join(tmpdir(), "chita-mem-persist-"));
-  const oldHome = process.env.HOME;
-  process.env.HOME = repo;
+  const statsPath = join(repo, "recurrence.json");
   try {
-    const gate1 = new RecurrenceGate(2);
+    const gate1 = new RecurrenceGate(2, statsPath);
     gate1.observe("persist-fact"); // 1st
-    const gate2 = new RecurrenceGate(2); // new instance, same HOME
+    const gate2 = new RecurrenceGate(2, statsPath); // new instance, same file
     expect(gate2.observe("persist-fact")).toBe(true); // count carried over
   } finally {
-    process.env.HOME = oldHome;
     rmSync(repo, { recursive: true, force: true });
   }
 });
