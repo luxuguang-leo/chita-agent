@@ -32,12 +32,28 @@ const MAX_TOKENS_DEFAULT = 1_000_000;
 const THRESHOLD_RATIO_DEFAULT = 0.9;
 
 /**
- * Token estimate: 4× chars conservative (v2.1 §2.1, M1; tokenizer lands M1.5).
- * Rationale: English ~4 chars/token; Chinese ~1.5-2 chars/token; 4× is a safe
- * upper bound for mixed content.
+ * Token estimation (v2.1 §2.1):
+ * - M1: 4× chars conservative (CJK ~1.5) — safe upper bound, no deps
+ * - M1.5: gpt-tokenizer (cl100k_base) when installed; falls back to 4×
  */
+let tokenizer: ((text: string) => number[]) | null = null;
+try {
+  // gpt-tokenizer is pure JS (audit-friendly); optional dep — absent in M1
+  const mod = await import("gpt-tokenizer");
+  if (typeof mod.encode === "function") tokenizer = mod.encode as (text: string) => number[];
+} catch {
+  tokenizer = null;
+}
+
 export function estimateTokens(text: string): number {
-  // CJK chars count ~1.5 tokens each; rest ~4 chars/token — conservative blend
+  if (tokenizer) {
+    try {
+      return tokenizer(text).length;
+    } catch {
+      // fall through to heuristic
+    }
+  }
+  // Heuristic: CJK ~1.5 tokens/char, ASCII ~4 chars/token (conservative)
   let cjk = 0;
   let other = 0;
   for (const ch of text) {

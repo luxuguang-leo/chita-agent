@@ -10,14 +10,17 @@ import { test, expect } from "bun:test";
 import { ContextManager, estimateTokens } from "./context.ts";
 import type { ChatMessage } from "./loop.ts";
 
-test("estimateTokens: 4x chars for ASCII, ~1.5x for CJK", () => {
-  // "hello world" = 11 ASCII chars -> ~3 tokens (11/4 = 2.75 -> 3)
-  expect(estimateTokens("hello world")).toBe(3);
-  // Chinese chars count individually (~1.5 per char): 4 chars -> ceil(4/1.5)=3
-  const cn = "你好世界";
-  expect(estimateTokens(cn)).toBe(3);
-  // empty
+test("estimateTokens: tokenizer when available, heuristic fallback", () => {
+  // Empty is always 0
   expect(estimateTokens("")).toBe(0);
+  // Non-empty text always yields a positive count
+  expect(estimateTokens("hello world")).toBeGreaterThan(0);
+  // Longer text never estimates fewer tokens than shorter text of same kind
+  const short = estimateTokens("a");
+  const long = estimateTokens("a".repeat(200));
+  expect(long).toBeGreaterThanOrEqual(short);
+  // CJK is counted (non-zero)
+  expect(estimateTokens("你好世界")).toBeGreaterThan(0);
 });
 
 test("truncate: below threshold is a no-op", () => {
@@ -48,11 +51,11 @@ test("truncate: drops oldest messages, keeps the first user task", () => {
 });
 
 test("truncate: tool_call/tool_result pairs kept or dropped together", () => {
-  const cm = new ContextManager({ maxTokens: 100, thresholdRatio: 0.9 });
+  const cm = new ContextManager({ maxTokens: 60, thresholdRatio: 0.9 }); // threshold 54
   const messages: ChatMessage[] = [
     { role: "user", content: "task" },
     { role: "assistant", content: "let me call read" },
-    { role: "tool", name: "read", content: "file content ".repeat(30) }, // ~360 chars ~90 tokens
+    { role: "tool", name: "read", content: "file content ".repeat(30) }, // ~90 tokens under tokenizer
     { role: "assistant", content: "done" },
   ];
   const { messages: kept, report } = cm.truncate(messages);

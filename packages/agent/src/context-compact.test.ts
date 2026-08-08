@@ -53,7 +53,7 @@ test("compact: critical context retained in summary (file paths)", () => {
 });
 
 test("compact: falls back to truncate when too few messages", () => {
-  const cm = new ContextManager({ maxTokens: 100, thresholdRatio: 0.9 }); // threshold 90
+  const cm = new ContextManager({ maxTokens: 60, thresholdRatio: 0.9 }); // threshold 54
   const messages: ChatMessage[] = [
     { role: "user", content: "task" },
     { role: "assistant", content: "x".repeat(200) }, // big

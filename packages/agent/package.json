@@ -5,7 +5,8 @@
   "type": "module",
   "main": "src/index.ts",
   "dependencies": {
+    "@chita/session": "0.0.0",
     "@chita/tools": "0.0.0",
-    "@chita/session": "0.0.0"
+    "gpt-tokenizer": "^3.4.0"
   }
 }
