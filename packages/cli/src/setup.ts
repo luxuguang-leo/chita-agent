@@ -7,7 +7,7 @@
  */
 
 import { mkdirSync, writeFileSync, readFileSync, readSync } from "node:fs";
-import { CONFIG_DIR } from "./config.ts";
+import { CONFIG_DIR, loadConfig } from "./config.ts";
 
 export interface ProviderChoice {
   id: string;
@@ -136,24 +136,40 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
 
   console.log("\nchita needs an API key to run tasks (OpenAI-compatible provider).\n");
 
-  // 1. provider
-  console.log("Choose a provider:");
-  PROVIDERS.forEach((p, i) => console.log(`  ${i + 1}. ${p.label}${p.baseUrl ? ` (${p.baseUrl})` : ""}`));
-  const provRaw = (await question("  [1-5]: ")).trim();
-  const provIdx = Number(provRaw) - 1;
-  const provider = PROVIDERS[provIdx] ?? PROVIDERS[0];
-  console.log(`→ ${provider.label}\n`);
+  // Reuse existing provider/model from config.json if present — don't re-ask
+  // what's already configured (Leo: "再进入还要我提示选模型和 API key").
+  // Only the API key is strictly required each time.
+  const existing = loadConfig();
+  const hasModel = existing.model && existing.model !== "deepseek-chat"; // default = unconfigured
 
-  // 2. base URL (custom only)
-  let baseUrl = provider.baseUrl;
-  if (provider.id === "custom" && !baseUrl) {
-    baseUrl = (await question("  Base URL (e.g. https://api.example.com/v1): ")).trim() || baseUrl;
-  }
+  let provider: ProviderChoice;
+  let model: string;
 
-  // 3. model
-  let model = provider.defaultModel;
-  if (!model) {
-    model = (await question("  Model name: ")).trim();
+  if (hasModel) {
+    const known = PROVIDERS.find((p) => p.defaultModel === existing.model);
+    provider = known ?? PROVIDERS[0];
+    model = existing.model;
+    console.log(`using saved config: ${provider.label} / ${model} (change via ~/.chita/config.json)\n`);
+  } else {
+    // 1. provider
+    console.log("Choose a provider:");
+    PROVIDERS.forEach((p, i) => console.log(`  ${i + 1}. ${p.label}${p.baseUrl ? ` (${p.baseUrl})` : ""}`));
+    const provRaw = (await question("  [1-5]: ")).trim();
+    const provIdx = Number(provRaw) - 1;
+    provider = PROVIDERS[provIdx] ?? PROVIDERS[0];
+    console.log(`→ ${provider.label}\n`);
+
+    // 2. base URL (custom only)
+    let baseUrl = provider.baseUrl;
+    if (provider.id === "custom" && !baseUrl) {
+      baseUrl = (await question("  Base URL (e.g. https://api.example.com/v1): ")).trim() || baseUrl;
+    }
+
+    // 3. model
+    model = provider.defaultModel;
+    if (!model) {
+      model = (await question("  Model name: ")).trim();
+    }
   }
 
   // 4. API key — masked (echoes *, never plaintext; Leo: pasting showed it)
@@ -163,9 +179,6 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     key = (await Promise.resolve(readSecretSync())).trim();
   } catch {
     return { ok: false, message: "setup aborted" };
-  }
-  if (!key) {
-    return { ok: false, message: "no API key provided — setup aborted" };
   }
   if (!key) {
     return { ok: false, message: "no API key provided — setup aborted" };
