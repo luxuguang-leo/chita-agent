@@ -134,7 +134,11 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     return secret;
   };
 
-  console.log("\nchita needs an API key to run tasks (OpenAI-compatible provider).\n");
+  console.log(
+    "\nchita needs an API key to run tasks (OpenAI-compatible provider).\n" +
+      "The key is your credential — stored only in ~/.chita/.env, never in\n" +
+      `config.json. Get one: https://platform.deepseek.com\n`
+  );
 
   // Reuse existing provider/model from config.json if present — don't re-ask
   // what's already configured (Leo: "再进入还要我提示选模型和 API key").
@@ -149,7 +153,16 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     const known = PROVIDERS.find((p) => p.defaultModel === existing.model);
     provider = known ?? PROVIDERS[0];
     model = existing.model;
-    console.log(`using saved config: ${provider.label} / ${model} (change via ~/.chita/config.json)\n`);
+    console.log(
+      `✓ model configured: ${provider.label} / ${model}\n` +
+        `  (change via ~/.chita/config.json)\n` +
+        `\n` +
+        `Your API key is a credential — it is NOT stored in config.json\n` +
+        `(security: keys never live in plain config). It goes in\n` +
+        `~/.chita/.env, and it's currently missing.\n` +
+        `\n` +
+        `Get a key: https://platform.deepseek.com (DeepSeek)\n`
+    );
   } else {
     // 1. provider
     console.log("Choose a provider:");
