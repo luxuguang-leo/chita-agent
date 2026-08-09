@@ -102,7 +102,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     { name: "exit", description: "leave TUI" },
   ];
   input.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, process.cwd()));
-  const statusText = new Text("session: new | mode: build | model: " + cfg.model + " | tokens: 0", 0, 0);
+  const statusText = new Text("session: new | mode: build | model: " + cfg.model + " | ↑0 ↓0 | 0/131072 (0%)", 0, 0);
 
   const root = new VStack([
     { component: messageScroll, grow: 1 },
@@ -128,7 +128,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     }
   };
   let mode: "build" | "plan" = "build";
-  let tokensUsed = 0;
+  let tokensUsed: { total: number; input: number; output: number } = { total: 0, input: 0, output: 0 };
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
   let pendingInputs: string[] = []; // FIFO queue while running (cur-038)
@@ -214,8 +214,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   function setStatus(suffix = ""): void {
     const sid = sessionId ? sessionId.slice(-8) : "new"; // short id (cur-042)
+    const ctx = cfg.contextWindow ?? 131_072;
+    const pct = ctx > 0 ? Math.round((tokensUsed.total / ctx) * 100) : 0;
     statusText.setText(
-      `session: ${sid} | mode: ${mode} | model: ${cfg.model} | tokens: ${tokensUsed}${suffix}`
+      `session: ${sid} | mode: ${mode} | model: ${cfg.model} | ` +
+        `↑${tokensUsed.input} ↓${tokensUsed.output} | ${tokensUsed.total}/${ctx} (${pct}%)${suffix}`
     );
     tui.requestRender(true);
   }

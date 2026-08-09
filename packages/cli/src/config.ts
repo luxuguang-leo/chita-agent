@@ -18,6 +18,8 @@ export interface Config {
   permissionDefault: "allow" | "ask" | "deny";
   /** Hard per-task token budget cap (v2.1 §2.2, <1M) */
   maxTokensPerTask: number;
+  /** Model context window in tokens (status bar shows usage %; e.g. DS 1M = 1_048_576) */
+  contextWindow: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -25,6 +27,7 @@ export const DEFAULT_CONFIG: Config = {
   model: "deepseek-chat",
   permissionDefault: "ask",
   maxTokensPerTask: 1_000_000,
+  contextWindow: 131_072,
 };
 
 /** Config directory (decision #6: ~/.chita/) */
@@ -32,7 +35,7 @@ export const CONFIG_DIR = `${process.env.HOME}/.chita`;
 export const CONFIG_PATH = `${CONFIG_DIR}/config.json`;
 
 /** Whitelist: config.json only accepts these keys; unknown keys (e.g. apiKey) never enter memory */
-const CONFIG_KEYS = ["provider", "model", "permissionDefault", "maxTokensPerTask"] as const;
+const CONFIG_KEYS = ["provider", "model", "permissionDefault", "maxTokensPerTask", "contextWindow"] as const;
 
 /** Load config; returns defaults if file is missing (never auto-creates; only init writes) */
 export function loadConfig(): Config {

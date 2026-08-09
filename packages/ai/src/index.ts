@@ -187,7 +187,14 @@ export class OpenAICompatibleProvider {
     // suppressed the done-with-usage path; loop accumulates ev.usage regardless
     // of kind)
     if (usage) {
-      yield { kind: "usage", usage: { tokens: usage.total_tokens } };
+      yield {
+        kind: "usage",
+        usage: {
+          tokens: usage.total_tokens,
+          input: usage.prompt_tokens ?? 0,
+          output: usage.completion_tokens ?? 0,
+        },
+      };
     }
 
     // Final: emit done ONLY when there were no tool calls. If the model
@@ -196,7 +203,15 @@ export class OpenAICompatibleProvider {
     // DeepSeek run exposed this: tool result never reached the model).
     if (toolCalls.size === 0) {
       if (usage) {
-        yield { kind: "done", summary: assistantContent, usage: { tokens: usage.total_tokens } };
+        yield {
+          kind: "done",
+          summary: assistantContent,
+          usage: {
+            tokens: usage.total_tokens,
+            input: usage.prompt_tokens ?? 0,
+            output: usage.completion_tokens ?? 0,
+          },
+        };
       } else {
         // Stream ended without [DONE] and no tool calls: plain final message.
         // The loop's done-hard-gate injects the gate note.

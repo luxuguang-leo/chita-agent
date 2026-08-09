@@ -43,7 +43,7 @@ export interface StreamEvent {
   callId?: string;
   result?: { ok: boolean; output?: string; error?: string };
   summary?: string;
-  usage?: { tokens: number };
+  usage?: { tokens: number; input: number; output: number };
 }
 
 export interface ChatTool {
@@ -104,6 +104,8 @@ export class AgentLoop {
   private followUps: string[] = [];
   private iterations = 0;
   private tokensUsed = 0;
+  private inputTokens = 0;
+  private outputTokens = 0;
   private opts: LoopOptions;
   private contextManager: ContextManager;
 
@@ -164,8 +166,8 @@ export class AgentLoop {
   }
 
   /** Tokens consumed across all turns (for UI status, cur-045). */
-  getTokensUsed(): number {
-    return this.tokensUsed;
+  getTokensUsed(): { total: number; input: number; output: number } {
+    return { total: this.tokensUsed, input: this.inputTokens, output: this.outputTokens };
   }
 
   /**
@@ -279,7 +281,11 @@ export class AgentLoop {
               }
               break;
             }
-            if (ev.usage?.tokens) this.tokensUsed += ev.usage.tokens;
+            if (ev.usage?.tokens) {
+              this.tokensUsed += ev.usage.tokens;
+              this.inputTokens += ev.usage.input ?? 0;
+              this.outputTokens += ev.usage.output ?? 0;
+            }
           }
           // flush any remaining assistant text (no tools, no done — gate note next)
           if (pendingAssistant) {

@@ -50,6 +50,83 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     return Promise.resolve(readLineSync());
   };
 
+  // Masked secret input: raw mode, echo '*' per char, support backspace,
+  // Ctrl+U (clear line), and pasted content. Falls back to plain line read
+  // on non-TTY (piped) stdin. (Leo: pasting the key showed plaintext.)
+  const isTTY = process.stdin.isTTY === true;
+  const readSecretSync = (): string => {
+    if (!isTTY) return readLineSync();
+    const prevRaw = process.stdin.isRaw ?? false;
+    process.stdin.setRawMode?.(true);
+    let secret = "";
+    for (;;) {
+      const b = Buffer.alloc(1);
+      const n = readSync(fd, b, 0, 1, null);
+      if (n <= 0) break; // EOF
+      const c = b.toString("utf8");
+      if (c === "\n" || c === "\r") break; // Enter
+      if (c === "\u0003") { process.stdout.write("\n"); process.stdin.setRawMode?.(prevRaw); throw new Error("aborted"); }
+      if (c === "\u007f" || c === "\b") { // backspace
+        if (secret.length > 0) {
+          secret = secret.slice(0, -1);
+          process.stdout.write("\b \b");
+        }
+        continue;
+      }
+      if (c === "\u0015") { // Ctrl+U: clear line
+        process.stdout.write("\r\u001b[K");
+        process.stdout.write("  API key: ");
+        secret = "";
+        continue;
+      }
+      // bracketed paste: \x1b[200~ ... \x1b[201~ — strip markers, echo once
+      if (c === "\u001b") {
+        // consume escape sequence (single char read: gather the rest)
+        let esc = "\u001b";
+        while (esc.length < 4) {
+          const e = Buffer.alloc(1);
+          const en = readSync(fd, e, 0, 1, null);
+          if (en <= 0) break;
+          esc += e.toString("utf8");
+          if (esc.endsWith("~")) break;
+        }
+        if (esc.startsWith("\u001b[200~")) {
+          // paste start marker — subsequent chars are content until [201~
+          for (;;) {
+            const p = Buffer.alloc(1);
+            const pn = readSync(fd, p, 0, 1, null);
+            if (pn <= 0) return secret;
+            const pc = p.toString("utf8");
+            if (pc === "\u001b") {
+              let pend = "\u001b";
+              while (!pend.endsWith("~") && pend.length < 8) {
+                const pe = Buffer.alloc(1);
+                const pen = readSync(fd, pe, 0, 1, null);
+                if (pen <= 0) break;
+                pend += pe.toString("utf8");
+              }
+              if (pend.includes("201~")) break;
+              secret += pend;
+              process.stdout.write("*".repeat(pend.length));
+              continue;
+            }
+            if (pc === "\r" || pc === "\n") continue; // paste may contain newlines
+            secret += pc;
+            process.stdout.write("*");
+          }
+          continue;
+        }
+        // other escape (arrow etc): ignore
+        continue;
+      }
+      secret += c;
+      process.stdout.write("*");
+    }
+    process.stdout.write("\n");
+    process.stdin.setRawMode?.(prevRaw);
+    return secret;
+  };
+
   console.log("\nchita needs an API key to run tasks (OpenAI-compatible provider).\n");
 
   // 1. provider
@@ -72,8 +149,17 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     model = (await question("  Model name: ")).trim();
   }
 
-  // 4. API key (masked input is hard cross-platform; just read the line)
-  const key = (await question("  API key: ")).trim();
+  // 4. API key — masked (echoes *, never plaintext; Leo: pasting showed it)
+  process.stdout.write("  API key: ");
+  let key = "";
+  try {
+    key = (await Promise.resolve(readSecretSync())).trim();
+  } catch {
+    return { ok: false, message: "setup aborted" };
+  }
+  if (!key) {
+    return { ok: false, message: "no API key provided — setup aborted" };
+  }
   if (!key) {
     return { ok: false, message: "no API key provided — setup aborted" };
   }
