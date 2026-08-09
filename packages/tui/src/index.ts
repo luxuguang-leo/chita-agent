@@ -428,6 +428,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           sessionId = null; // new session unbinds the tape (cur-040 minor)
           toolResults.clear(); // no stale /tool output (cur-043 nit)
           pendingInputs = []; // drop queued inputs from old session (cur-043 nit)
+          tokensUsed = { total: 0, input: 0, output: 0 }; // fresh stats (Leo: /new kept old ↑↓/ctx)
           appendMessage("system", "new session");
           setStatus();
           return;
@@ -438,6 +439,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         case "/mode": {
           mode = value.includes("plan") ? "plan" : "build";
           loop = buildLoop(); // rebuild with new mode (cur-033 #5)
+          tokensUsed = { total: 0, input: 0, output: 0 }; // loop reset -> stats reset
           appendMessage("system", `mode -> ${mode} (session reset)`);
           setStatus();
           return;
