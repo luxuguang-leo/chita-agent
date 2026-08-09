@@ -13,6 +13,8 @@
 
 import { TuiMainScreen } from "../vendor/tui-main-screen.ts";
 import { ProcessTerminal } from "../vendor/terminal.ts";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { ScrollView } from "../vendor/components/scroll-view.ts";
 import { Text } from "../vendor/components/text.ts";
 import { VStack } from "../vendor/components/v-stack.ts";
@@ -34,7 +36,48 @@ import {
   TUI_KEYBINDINGS,
 } from "../vendor/keybindings.ts";
 import { buildSessionTree, forkWithSummary } from "../../session/src/session-tree.ts";
-import { Tape } from "../../session/src/tape.ts";
+import { Tape, cwdKey, SESSIONS_ROOT } from "../../session/src/tape.ts";
+import type { TraceEvent } from "../../session/src/trace.ts";
+
+/** Describe the most recent session in this cwd: id + first user message +
+ *  age. Returns null when none. Used for the startup hint and /resume
+ *  without an id (Leo: opaque random ids are unfriendly). */
+function recentSessionSummary(cwd: string): { id: string; first: string; age: string } | null {
+  try {
+    const dir = join(SESSIONS_ROOT, cwdKey(cwd));
+    if (!existsSync(dir)) return null;
+    const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    if (files.length === 0) return null;
+    // newest first by mtime
+    files.sort((a, b) => statSync(join(dir, b)).mtimeMs - statSync(join(dir, a)).mtimeMs);
+    for (const f of files) {
+      const id = f.replace(/\.jsonl$/, "");
+      const tape = Tape.open(cwd, id);
+      const events = tape.readAll();
+      const created = tape.readMeta()?.createdAt;
+      tape.close();
+      if (events.length === 0) continue;
+      const firstUser = events.find(
+        (e): e is Extract<TraceEvent, { type: "message" }> => e.type === "message" && e.role === "user"
+      );
+      const first = (firstUser?.content ?? "").replace(/\s+/g, " ").trim();
+      if (!first) continue;
+      const age = created ? ageLabel(created) : "";
+      return { id, first: first.slice(0, 40), age };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function ageLabel(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+}
 
 export interface TuiOptions {
   judge?: boolean;
@@ -395,37 +438,18 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           return;
         }
         case "/resume": {
-          const id = value.split(/\s+/)[1];
+          let id = value.split(/\s+/)[1];
           if (!id) {
-            appendMessage("system", "usage: /resume <session-id>");
-            return;
-          }
-          try {
-            const tape = Tape.open(process.cwd(), id);
-            const history: { role: string; content: string }[] = [];
-            const events = tape.readAll();
-            tape.close();
-            // map only complete tool pairs + messages; skip orphan/meta
-            // (cur-038 minor: seedConversation rejects orphan tools)
-            for (const ev of events) {
-              if (ev.type === "message") {
-                // message role is never "tool" (TraceRole excludes it)
-                history.push({ role: ev.role, content: ev.content });
-              } else if (ev.type === "tool_result") {
-                const prev = history[history.length - 1];
-                if (prev && prev.role === "assistant") {
-                  history.push({ role: "tool", content: ev.output ?? ev.error ?? "" });
-                }
-                // orphan tool_result without preceding assistant: skip
-              }
+            // no id: resume the most recent session in this cwd (Leo-friendly)
+            const recent = recentSessionSummary(process.cwd());
+            if (!recent) {
+              appendMessage("system", "no previous session in this directory — /resume <session-id>");
+              return;
             }
-            loop = buildLoop();
-            loop.seedConversation(history as never[]);
-            sessionId = id;
-            appendMessage("system", `resumed ${id} (${history.length} messages)`);
-            setStatus();
-          } catch (e) {
-            appendMessage("system", `resume failed: ${String(e)}`);
+            id = recent.id;
+          }
+          if (resumeSession(id)) {
+            appendMessage("system", `resumed ${id}`);
           }
           return;
         }
@@ -514,6 +538,39 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     }
   }
 
+  /** Resume a session tape into a fresh loop (shared by /resume and startup
+   *  auto-resume; Leo: default should continue the last session). */
+  function resumeSession(id: string): boolean {
+    try {
+      const tape = Tape.open(process.cwd(), id);
+      const history: { role: string; content: string }[] = [];
+      const events = tape.readAll();
+      tape.close();
+      // map only complete tool pairs + messages; skip orphan/meta
+      // (cur-038 minor: seedConversation rejects orphan tools)
+      for (const ev of events) {
+        if (ev.type === "message") {
+          // message role is never "tool" (TraceRole excludes it)
+          history.push({ role: ev.role, content: ev.content });
+        } else if (ev.type === "tool_result") {
+          const prev = history[history.length - 1];
+          if (prev && prev.role === "assistant") {
+            history.push({ role: "tool", content: ev.output ?? ev.error ?? "" });
+          }
+          // orphan tool_result without preceding assistant: skip
+        }
+      }
+      loop = buildLoop();
+      loop.seedConversation(history as never[]);
+      sessionId = id;
+      setStatus();
+      return true;
+    } catch (e) {
+      appendMessage("system", `resume failed: ${String(e)}`);
+      return false;
+    }
+  }
+
   input.onSubmit = (value) => void onSubmit(value);
 
   // Ctrl+C: cancel current turn (first), exit (second) — cur-033 #1.
@@ -545,4 +602,15 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   process.on("SIGINT", handleCtrlC);
 
   tui.start();
+
+  // Startup: default = continue the most recent session in this cwd
+  // (Leo: opaque ids + manual resume were unfriendly). /new starts fresh.
+  const recent = recentSessionSummary(process.cwd());
+  if (recent) {
+    const when = recent.age ? ` (${recent.age})` : "";
+    if (resumeSession(recent.id)) {
+      appendMessage("system", `已恢复上次会话 ${recent.id}${when} — 内容: "${recent.first}"`);
+      appendMessage("system", `/new 开新会话，或直接继续输入`);
+    }
+  }
 }
