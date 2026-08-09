@@ -522,12 +522,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // raw mode; Leo: neither worked). Shared handler keeps semantics identical.
   let ctrlCPressed = false;
   const handleCtrlC = () => {
-    if (running && cancelCurrent) {
+    // Running: first press cancels the turn, second (2s) exits.
+    if (running && cancelCurrent && !ctrlCPressed) {
       cancelCurrent();
       ctrlCPressed = false;
       return;
     }
-    if (ctrlCPressed) {
+    // Idle: a single Ctrl+C exits immediately (Leo: double-press felt broken).
+    if (!running || ctrlCPressed) {
       tui.stop();
       process.exit(0);
     }
