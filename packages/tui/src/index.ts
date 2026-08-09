@@ -186,6 +186,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // last tool results per name (for /tool <name> full expansion, cur-042)
   const toolResults = new Map<string, { ok: boolean; output?: string; error?: string }>();
   const lastToolCmd = new Map<string, string>(); // callId -> command (omp-style pairing)
+  let bannerCount = 0; // consecutive decorative echo banners (folded)
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
@@ -323,8 +324,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   /** Brief command for the tool line: strip redirection/noise, keep first
    *  two words (omp style). 'ls -la ~/.agents 2>/dev/null; echo ---' ->
    *  'ls -la …'. Full command stays in /tool. (Leo: long cmd text = noise.) */
-  function briefCmd(cmd: string): string {
-    const cleaned = cmd
+  function briefCmd(cmd: string): string {    const cleaned = cmd
       .replace(/\s*2>\s*\/dev\/null/g, "")
       .replace(/\s*>\s*\/dev\/null/g, "")
       .replace(/\s*\|\s*head(\s+-\d+)?.*$/, "")
@@ -356,6 +356,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     return pick.slice(0, 60) + suffix;
   }
 
+  /** True when the command is a decorative echo banner (echo "=== xxx ===",
+   *  echo ---, echo "-----") — folded out of the tool feed (Leo: flood). */
+  function isBannerCmd(cmd: string): boolean {
+    return /^echo\s+["']?={2,}/.test(cmd) || /^echo\s+["']?-{2,}/.test(cmd) || /^echo\s*$/.test(cmd);
+  }
+
           if (ev.type === "tool_call") {
             // remember the command/args — shown next to the result (omp style)
             const a = (ev.tool?.args ?? {}) as Record<string, unknown>;
@@ -370,14 +376,23 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             // Show real content, not bare "ok" (Leo: [bash] ok ×5 is noise).
             // Success -> condensed summary (decorations skipped, titles
             // extracted, long output annotated); failure -> error detail.
-            let detail: string;
-            if (ev.ok) {
-              const cmd = lastToolCmd.get(ev.callId ?? ev.toolName) ?? "";
-              detail = cmd ? `\`${briefCmd(cmd)}\`` : toolSummary(ev.toolName, ev.output ?? "");
+            const cmd = lastToolCmd.get(ev.callId ?? ev.toolName) ?? "";
+            const isBanner = ev.ok && isBannerCmd(cmd);
+            let detail = "";
+            if (isBanner) {
+              // decorative `echo "==="` banners: fold consecutive ones into
+              // a single line instead of flooding (Leo: 5× echo "===…)
+              bannerCount++;
             } else {
-              detail = `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
+              if (bannerCount > 0) {
+                appendMessage("tool", `[bash] ×${bannerCount} banner lines`);
+                bannerCount = 0;
+              }
+              detail = ev.ok
+                ? (cmd ? `\`${briefCmd(cmd)}\`` : toolSummary(ev.toolName, ev.output ?? ""))
+                : `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
+              appendMessage("tool", `[${ev.toolName}] ${detail}`);
             }
-            appendMessage("tool", `[${ev.toolName}] ${detail}`);
             // remember full result for /tool expansion (cur-042)
             toolResults.set(ev.toolName, { ok: ev.ok, output: ev.output, error: ev.error });
             // persist tool result to tape (cur-042)
