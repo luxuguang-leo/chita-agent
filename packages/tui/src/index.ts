@@ -18,6 +18,7 @@ import { Text } from "../vendor/components/text.ts";
 import { VStack } from "../vendor/components/v-stack.ts";
 import { HStack } from "../vendor/components/h-stack.ts";
 import { Box } from "../vendor/components/box.ts";
+import { Markdown, type MarkdownTheme } from "../vendor/components/markdown.ts";
 import { Editor, type EditorTheme } from "../vendor/components/editor.ts";
 import { CombinedAutocompleteProvider, type SlashCommand } from "../vendor/autocomplete.ts";
 import type { SelectListTheme } from "../vendor/components/select-list.ts";
@@ -30,6 +31,8 @@ import {
   setKeybindings,
   TUI_KEYBINDINGS,
 } from "../vendor/keybindings.ts";
+import { buildSessionTree, forkWithSummary } from "../../session/src/session-tree.ts";
+import { Tape } from "../../session/src/tape.ts";
 
 export interface TuiOptions {
   judge?: boolean;
@@ -94,16 +97,24 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   // --- session state ---
   let loop: AgentLoop | null = null;
+  let sessionId: string | null = null; // bound to the active tape session
   let mode: "build" | "plan" = "build";
   let tokensUsed = 0;
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
   /** Pending assistant message being streamed (updated in place, not new rows) */
-  let streamingText: Text | null = null;
+  let streamingText: Markdown | null = null;
   let streamingBuffer = "";
 
+  // Markdown theme (identity — plain rendering, T2; styling T3)
+  const mdTheme: MarkdownTheme = {
+    heading: id, link: id, linkUrl: id, code: id, codeBlock: id,
+    codeBlockBorder: id, quote: id, quoteBorder: id, hr: id, listBullet: id,
+    bold: id, italic: id, strikethrough: id, underline: id,
+  };
+
   function appendMessage(role: string, content: string): void {
-    messagesBox.addChild(new Text(`[${role}] ${content}`, 0, 0));
+    messagesBox.addChild(new Markdown(`**${role}** ${content}`, 0, 0, mdTheme));
     tui.requestRender(true);
   }
 
@@ -111,10 +122,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function appendStreamed(content: string): void {
     streamingBuffer += content;
     if (!streamingText) {
-      streamingText = new Text(`[assistant] ${streamingBuffer}`, 0, 0);
+      streamingText = new Markdown(`**assistant** ${streamingBuffer}`, 0, 0, mdTheme);
       messagesBox.addChild(streamingText);
     } else {
-      streamingText.setText(`[assistant] ${streamingBuffer}`);
+      streamingText.setText(`**assistant** ${streamingBuffer}`);
     }
     tui.requestRender(true);
   }
@@ -165,7 +176,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       const cmd = value.split(/\s+/)[0];
       switch (cmd) {
         case "/help":
-          appendMessage("system", "/help /new /mode build|plan /goal /exit");
+          appendMessage("system", "/help /new /tree /resume <id> /fork /mode build|plan /goal /exit");
           return;
         case "/new":
           loop = null;
@@ -186,6 +197,68 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         case "/goal":
           appendMessage("system", "/goal: independent verification (full wiring in T2)");
           return;
+        case "/tree": {
+          const roots = buildSessionTree(process.cwd());
+          if (roots.length === 0) {
+            appendMessage("system", "no sessions yet");
+            return;
+          }
+          const lines: string[] = [];
+          const walk = (nodes: typeof roots, depth: number) => {
+            for (const n of nodes) {
+              lines.push("  ".repeat(depth) + `${n.sessionId}${n.branchSummary ? ` (${n.branchSummary})` : ""}`);
+              walk(n.children, depth + 1);
+            }
+          };
+          walk(roots, 0);
+          appendMessage("system", "sessions:\n" + lines.join("\n"));
+          return;
+        }
+        case "/resume": {
+          const id = value.split(/\s+/)[1];
+          if (!id) {
+            appendMessage("system", "usage: /resume <session-id>");
+            return;
+          }
+          try {
+            const tape = Tape.open(process.cwd(), id);
+            const history = tape.readAll().map((ev) =>
+              ev.type === "message"
+                ? { role: ev.role, content: ev.content } as const
+                : ev.type === "tool_result"
+                  ? { role: "tool" as const, name: ev.toolName, toolCallId: ev.callId, content: ev.output ?? "" }
+                  : { role: "system" as const, content: JSON.stringify(ev) }
+            );
+            tape.close();
+            loop = buildLoop();
+            loop.seedConversation(history as never[]);
+            appendMessage("system", `resumed ${id} (${history.length} messages)`);
+            setStatus();
+          } catch (e) {
+            appendMessage("system", `resume failed: ${String(e)}`);
+          }
+          return;
+        }
+        case "/fork": {
+          if (!loop) {
+            appendMessage("system", "no active session to fork");
+            return;
+          }
+          const parentId = sessionId ?? `sess-${Date.now().toString(36)}`;
+          const parent = Tape.open(process.cwd(), parentId);
+          const childId = `fork-${Date.now().toString(36)}`;
+          const child = forkWithSummary(parent, childId, "manual fork from TUI", {
+            cwd: process.cwd(),
+            model: cfg.model,
+            provider: "openai-compatible",
+            createdAt: new Date().toISOString(),
+          });
+          parent.close();
+          child.close();
+          sessionId = parentId;
+          appendMessage("system", `forked ${parentId} -> ${childId}`);
+          return;
+        }
         default:
           appendMessage("system", `unknown: ${cmd} (try /help)`);
           return;
