@@ -261,6 +261,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     if (content.trim()) {
       tapeAppend({ type: "message", role: "assistant", content });
     }
+    // persist cumulative token usage — resume restores the counter instead
+    // of restarting at 0 (Leo: restart showed ↑0 ↓0 after resume)
+    if (loop) {
+      const u = loop.getTokensUsed();
+      tapeAppend({ type: "usage", total: u.total, input: u.input, output: u.output });
+    }
     streamingText = null;
     streamingBuffer = "";
   }
@@ -599,6 +605,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       }
       loop = buildLoop();
       loop.seedConversation(history as never[]);
+      // restore cumulative usage from persisted snapshots (Leo: restart 0)
+      const usage = events
+        .filter((e): e is Extract<TraceEvent, { type: "usage" }> => e.type === "usage")
+        .reduce((acc, e) => ({ total: acc.total + e.total, input: acc.input + e.input, output: acc.output + e.output }),
+          { total: 0, input: 0, output: 0 });
+      loop.restoreTokens(usage);
+      tokensUsed = loop.getTokensUsed(); // TUI copy must match (Leo: resume 0)
       sessionId = id;
       setStatus();
       return true;
