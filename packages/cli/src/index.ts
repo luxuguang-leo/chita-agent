@@ -33,10 +33,22 @@ function runInit(): void {
 
 async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean }): Promise<void> {
   const cfg = loadConfig();
-  const key = apiKey();
+  let key = apiKey();
   if (!key) {
-    console.error("CHITA_API_KEY is not set (required to run tasks)");
-    process.exit(1);
+    // first-run guidance: interactive setup (like Claude Code /login)
+    const { runSetup } = await import("./setup.ts");
+    const setup = await runSetup();
+    if (!setup.ok) {
+      console.error(`\n${setup.message}`);
+      console.error("tip: also works via `chita init` — or export CHITA_API_KEY in your shell");
+      process.exit(1);
+    }
+    console.log(`\n✓ ${setup.message}`);
+    key = apiKey(); // re-read from ~/.chita/.env
+    if (!key) {
+      console.error("setup completed but key not readable — check ~/.chita/.env");
+      process.exit(1);
+    }
   }
 
   // Worker provider: the model doing the task

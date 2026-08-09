@@ -52,10 +52,21 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   );
 
   const cfg = loadConfig();
-  const key = apiKey();
+  let key = apiKey();
   if (!key) {
-    console.error("CHITA_API_KEY is not set (required to run tasks)");
-    process.exit(1);
+    // first-run guidance before entering the TUI
+    const { runSetup } = await import("../../cli/src/setup.ts");
+    const setup = await runSetup();
+    if (!setup.ok) {
+      console.error(`\n${setup.message}`);
+      process.exit(1);
+    }
+    console.log(`\n✓ ${setup.message}\n`);
+    key = apiKey();
+    if (!key) {
+      console.error("setup completed but key not readable — check ~/.chita/.env");
+      process.exit(1);
+    }
   }
 
   const makeProvider = () =>
