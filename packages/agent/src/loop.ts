@@ -248,7 +248,7 @@ export class AgentLoop {
                 this.messages.push(pendingAssistant);
                 pendingAssistant = null;
               }
-              const result = await this.runTool(ev.toolName, ev.args ?? {});
+              const result = await this.runTool(ev.toolName, ev.args ?? {}, ev.callId);
               this.state = "OBSERVING";
               // tool result back to the model as a tool message (OpenAI requires
               // tool_call_id referencing the original tool_calls)
@@ -364,7 +364,11 @@ export class AgentLoop {
   private hasPendingToolCalls(): boolean {
     const last = this.messages[this.messages.length - 1];
     return last?.role === "tool";
-  }  private async runTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output?: string; error?: string }> {
+  }  private async runTool(
+    name: string,
+    args: Record<string, unknown>,
+    callId?: string
+  ): Promise<{ ok: boolean; output?: string; error?: string }> {
     const ctx: ToolContext = { cwd: this.opts.cwd, permission: "ask", signal: this.opts.signal };
     // Read-only tools default allow; ask stays ask for the hook to decide
     const tool = this.tools.get(name);
@@ -375,7 +379,7 @@ export class AgentLoop {
     const WRITE_TOOLS: Record<string, true> = { write: true, bash: true };
     const isWrite = WRITE_TOOLS[name] || (name === "git" && !isReadOnlyGit(args));
     if (this.opts.mode === "plan" && isWrite) {
-      return this.emitToolResult(name, { ok: false, error: `blocked by plan mode (read-only analysis): ${name}` });
+      return this.emitToolResult(name, { ok: false, error: `blocked by plan mode (read-only analysis): ${name}` }, callId);
     }
 
     // M1 --print dev mode: auto-approve ask-level tools (v2.1 §2.3)
@@ -386,7 +390,7 @@ export class AgentLoop {
     // Permission hook
     if (this.opts.hooks?.beforeToolCall) {
       const ok = await this.opts.hooks.beforeToolCall(name, args, ctx);
-      if (!ok) return this.emitToolResult(name, { ok: false, error: `blocked by beforeToolCall: ${name}` });
+      if (!ok) return this.emitToolResult(name, { ok: false, error: `blocked by beforeToolCall: ${name}` }, callId);
     }
 
     const result = await this.tools.execute(name, args, ctx);
@@ -398,15 +402,16 @@ export class AgentLoop {
       const scrubbed = this.opts.hooks.afterToolCall(name, result);
       if (scrubbed) finalResult = { ...result, ...scrubbed };
     }
-    return this.emitToolResult(name, finalResult);
+    return this.emitToolResult(name, finalResult, callId);
   }
 
   /** Emit a tool_result trace event and return the result (single choke point) */
-  private emitToolResult(name: string, result: ToolResult): ToolResult {
+  private emitToolResult(name: string, result: ToolResult, callId?: string): ToolResult {
     this.opts.hooks?.onEvent?.({
       seq: this.iterations,
       type: "tool_result",
       toolName: name,
+      callId,
       ok: result.ok,
       output: result.output,
       error: result.error,

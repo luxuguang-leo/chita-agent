@@ -181,3 +181,31 @@ test("abort: cancelled turn does NOT poison next continue (cur-036)", async () =
   expect(r2.state).toBe("DONE");
   expect(r2.summary).toBe("recovered");
 });
+
+test("tool_result event carries callId (cur-043)", async () => {
+  const events: { type: string; callId?: string }[] = [];
+  const loop = new AgentLoop({
+    cwd: "/tmp",
+    provider: new FakeProvider([
+      [
+        {
+          kind: "message",
+          message: {
+            role: "assistant",
+            content: "read",
+            toolCalls: [{ id: "c9", name: "read", args: "{}" }],
+          },
+        },
+        { kind: "tool_call", toolName: "read", args: {}, callId: "c9" },
+      ],
+      [{ kind: "done", summary: "done" }],
+    ]),
+    hooks: {
+      beforeToolCall: async () => true,
+      onEvent: (ev) => events.push({ type: ev.type, callId: (ev as { callId?: string }).callId }),
+    },
+  });
+  await loop.run("read");
+  const toolEvent = events.find((e) => e.type === "tool_result");
+  expect(toolEvent?.callId).toBe("c9");
+});

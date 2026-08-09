@@ -159,11 +159,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   }
 
   /** Window the message area: drop oldest rows past MAX_VISIBLE (cur-042
-   *  virtualization; full history stays in the tape). */
+   *  virtualization; full history stays in the tape).
+   *  Uses removeChild (which invalidates Box cache) — never mutate children
+   *  directly (cur-043 major: shift() bypassed invalidateCache). */
   function trimMessages(): void {
     const MAX_VISIBLE = 200;
     while (messagesBox.children.length > MAX_VISIBLE) {
-      const oldest = messagesBox.children.shift();
+      const oldest = messagesBox.children[0];
       if (oldest) messagesBox.removeChild(oldest);
     }
   }
@@ -182,6 +184,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   }
 
   function endStreaming(): void {
+    // persist the complete assistant message ONCE (cur-043 major: per-fragment
+    // tape writes polluted sessions; write the full buffer at turn end)
+    if (streamingBuffer.trim()) {
+      tapeAppend({ type: "message", role: "assistant", content: streamingBuffer });
+    }
     streamingText = null;
     streamingBuffer = "";
   }
@@ -208,10 +215,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             return { ok: result.ok, output: scrubbed.text, redacted: scrubbed.redacted };
           }
         },
-        // streaming assistant text rendered live (cur-033 #3) + persisted
+        // streaming assistant text rendered live (cur-033 #3); NOT persisted
+        // per-fragment (cur-043 major: fragments would pollute the tape) —
+        // written once at endStreaming from the buffer
         onAssistantMessage: (msg) => {
           appendStreamed(msg.content);
-          tapeAppend({ type: "message", role: "assistant", content: msg.content });
         },
         onEvent: (ev) => {
           if (ev.type === "tool_result") {
@@ -274,6 +282,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         case "/new":
           loop = null;
           sessionId = null; // new session unbinds the tape (cur-040 minor)
+          toolResults.clear(); // no stale /tool output (cur-043 nit)
+          pendingInputs = []; // drop queued inputs from old session (cur-043 nit)
           appendMessage("system", "new session");
           setStatus();
           return;
