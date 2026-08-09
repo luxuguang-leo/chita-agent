@@ -132,10 +132,44 @@ export class AgentLoop {
     this.followUps.push(text);
   }
 
+  /**
+   * run = NEW session: resets messages to [{user: initialTask}] then runs.
+   * (TUI must NOT use run for multi-turn — use continue(), cur-032.)
+   */
   async run(initialTask: string): Promise<{ state: LoopState; summary?: string }> {
     this.state = "THINKING";
     this.messages = [{ role: "user", content: initialTask }];
+    return this.runLoop();
+  }
 
+  /**
+   * continue = APPEND a turn: pushes the user message onto the EXISTING
+   * conversation and runs one more loop (no reset). Multi-turn continuity
+   * keeps tool_call/tool pairing and tape consistency (cur-031 blocker).
+   */
+  async continue(userMessage: string): Promise<{ state: LoopState; summary?: string }> {
+    this.messages.push({ role: "user", content: userMessage });
+    return this.runLoop();
+  }
+
+  /**
+   * seed = restore/inject: sets initial messages (resume from tape, tests).
+   * Validates tool pairing — an orphan tool message is rejected (cur-032).
+   */
+  seedConversation(history: ChatMessage[]): void {
+    const ok = history.every((m, i) => {
+      if (m.role !== "tool") return true;
+      // a tool message needs a preceding assistant message with toolCalls
+      const prev = history[i - 1];
+      return prev?.role === "assistant" && !!prev.toolCalls?.length;
+    });
+    if (!ok) throw new Error("seedConversation: orphan tool message (no matching assistant toolCalls)");
+    this.messages = [...history];
+    this.state = "IDLE";
+  }
+
+  /** The shared inner loop (run/continue both enter here). */
+  private async runLoop(): Promise<{ state: LoopState; summary?: string }> {
     const maxIter = this.opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     const maxTokens = this.opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
