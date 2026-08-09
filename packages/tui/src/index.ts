@@ -63,9 +63,30 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
 
+  /** Pending assistant message being streamed (updated in place, not new rows) */
+  let streamingText: Text | null = null;
+  let streamingBuffer = "";
+
   function appendMessage(role: string, content: string): void {
     messagesBox.addChild(new Text(`[${role}] ${content}`, 0, 0));
     tui.requestRender(true);
+  }
+
+  /** Streaming: accumulate into one row, update in place (cur-033 #3 refinement) */
+  function appendStreamed(content: string): void {
+    streamingBuffer += content;
+    if (!streamingText) {
+      streamingText = new Text(`[assistant] ${streamingBuffer}`, 0, 0);
+      messagesBox.addChild(streamingText);
+    } else {
+      streamingText.setText(`[assistant] ${streamingBuffer}`);
+    }
+    tui.requestRender(true);
+  }
+
+  function endStreaming(): void {
+    streamingText = null;
+    streamingBuffer = "";
   }
 
   function setStatus(suffix = ""): void {
@@ -93,7 +114,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           }
         },
         // streaming assistant text rendered live (cur-033 #3)
-        onAssistantMessage: (msg) => appendMessage("assistant", msg.content),
+        onAssistantMessage: (msg) => appendStreamed(msg.content),
         onEvent: (ev) => {
           if (ev.type === "tool_result") {
             appendMessage("tool", `[${ev.toolName}] ${ev.ok ? "ok" : "error"}`);
@@ -150,12 +171,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       if (result.state === "CANCELLED") {
         appendMessage("system", "cancelled");
       } else if (result.summary) {
-        appendMessage("assistant", result.summary);
+        appendStreamed(result.summary);
       }
     } catch (e) {
       const msg = e instanceof Error && e.name === "AbortError" ? "cancelled" : String(e);
       appendMessage("system", msg);
     } finally {
+      endStreaming();
       running = false;
       cancelCurrent = null;
       setStatus();
