@@ -29,7 +29,8 @@ export type TraceEventType =
   | "judge" // /goal judge evaluation (M4)
   | "context_truncated" // context-manager truncation (v2.1 observability)
   | "error" // error event
-  | "done"; // done tool call (v2.1 §2.2 early-stop hard gate)
+  | "done" // done tool call (v2.1 §2.2 early-stop hard gate)
+  | "usage"; // token usage snapshot (persisted so resume restores the count)
 
 /** Tool permission (v2.1 §2.3) */
 export type Permission = "allow" | "ask" | "deny";
@@ -142,12 +143,21 @@ export interface DoneEvent extends TraceEventBase {
   summary?: string;
 }
 
+/** Token usage snapshot (cumulative across the session; restore on resume) */
+export interface UsageEvent extends TraceEventBase {
+  type: "usage";
+  total: number;
+  input: number;
+  output: number;
+}
+
 /** Union of trace events */
 export type TraceEvent =
   | MessageEvent
   | ToolCallEvent
   | ToolResultEvent
   | JudgeEvent
+  | UsageEvent
   | ContextTruncatedEvent
   | ErrorEvent
   | DoneEvent;

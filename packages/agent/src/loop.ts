@@ -170,6 +170,14 @@ export class AgentLoop {
     return { total: this.tokensUsed, input: this.inputTokens, output: this.outputTokens };
   }
 
+  /** Restore cumulative usage after resuming a session from tape (Leo:
+   *  restart showed 0 — counters are per-loop and reset on resume). */
+  restoreTokens(usage: { total: number; input: number; output: number }): void {
+    this.tokensUsed = usage.total;
+    this.inputTokens = usage.input;
+    this.outputTokens = usage.output;
+  }
+
   /**
    * seed = restore/inject: sets initial messages (resume from tape, tests).
    * Validates tool pairing — an orphan tool message is rejected (cur-032).
