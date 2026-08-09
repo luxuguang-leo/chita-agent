@@ -38,6 +38,7 @@ import {
 import { buildSessionTree, forkWithSummary } from "../../session/src/session-tree.ts";
 import { Tape, cwdKey, SESSIONS_ROOT } from "../../session/src/tape.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
+import { estimateTokens } from "../../agent/src/context.ts";
 
 /** Describe the most recent session in this cwd: id + first user message +
  *  age. Returns null when none. Used for the startup hint and /resume
@@ -146,7 +147,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   ];
   input.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, process.cwd()));
   const statusText = new Text(
-    "session: new | mode: build | model: " + cfg.model + ` | ↑0 ↓0 | 0/${cfg.contextWindow ?? 131_072} (0%)`,
+    "session: new | mode: build | model: " + cfg.model + ` | ↑0 ↓0 | 会话 0/${cfg.contextWindow ?? 131_072} (0%)`,
     0,
     0
   );
@@ -274,10 +275,19 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function setStatus(suffix = ""): void {
     const sid = sessionId ? sessionId.slice(-8) : "new"; // short id (cur-042)
     const ctx = cfg.contextWindow ?? 131_072;
-    const pct = ctx > 0 ? Math.round((tokensUsed.total / ctx) * 100) : 0;
+    // Context occupancy = the CURRENT conversation's actual length
+    // (estimateTokens), NOT cumulative API consumption — the API resends all
+    // history every turn, so summing usage.input inflates the %. ↑↓ stay
+    // cumulative (billing view). (Leo: what does the % mean?)
+    let cur = 0;
+    if (loop) {
+      const conv = loop.getConversation();
+      cur = estimateTokens(conv.map((m) => m.content ?? "").join("\n"));
+    }
+    const pct = ctx > 0 ? Math.round((cur / ctx) * 100) : 0;
     statusText.setText(
       `session: ${sid} | mode: ${mode} | model: ${cfg.model} | ` +
-        `↑${tokensUsed.input} ↓${tokensUsed.output} | ${tokensUsed.total}/${ctx} (${pct}%)${suffix}`
+        `↑${tokensUsed.input} ↓${tokensUsed.output} | 会话 ${cur}/${ctx} (${pct}%)${suffix}`
     );
     tui.requestRender(true);
   }
