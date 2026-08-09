@@ -750,8 +750,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   tui.start();
 
-  // Startup banner (Leo: missing in TUI) — logo + version/model/cwd
-  appendMessage("system", renderBanner({ version: VERSION, model: cfg.model, cwd: process.cwd() }));
+  // Startup banner (Leo: missing in TUI) — plain Text, NOT Markdown: the
+  // ASCII art (\\ _ | `) would be mangled by the md parser (Leo: 显示混乱).
+  const bannerText = new Text(renderBanner({ version: VERSION, model: cfg.model, cwd: process.cwd() }), 1, 0);
+  messagesBox.addChild(bannerText);
+  trimMessages();
 
   // Startup: default = continue the most recent session in this cwd
   // (Leo: opaque ids + manual resume were unfriendly). /new starts fresh.
