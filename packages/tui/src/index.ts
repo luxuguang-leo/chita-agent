@@ -13,7 +13,7 @@
 
 import { TuiMainScreen } from "../vendor/tui-main-screen.ts";
 import { ProcessTerminal } from "../vendor/terminal.ts";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { ScrollView } from "../vendor/components/scroll-view.ts";
 import { Text } from "../vendor/components/text.ts";
@@ -638,28 +638,42 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // SIGINT signal (some terminals/PTYs deliver Ctrl+C as a signal even in
   // raw mode; Leo: neither worked). Shared handler keeps semantics identical.
   let ctrlCPressed = false;
+  const ctrlLog = (msg: string) => {
+    try {
+      appendFileSync("/tmp/chita-ctrl.log", `${new Date().toISOString()} ${msg} running=${running} ctrl=${ctrlCPressed}\n`);
+    } catch {
+      // best-effort debug log
+    }
+  };
   const handleCtrlC = () => {
-    // Running: first press cancels the turn, second (2s) exits.
+    ctrlLog("handleCtrlC called");
+    // Running: first press cancels the turn AND arms exit — the next press
+    // (within 2s) exits unconditionally. Previously ctrlCPressed was reset
+    // here, so a second Ctrl+C while still running re-cancelled forever
+    // (Leo: 'Ctrl+C 无法退出' during a turn).
     if (running && cancelCurrent && !ctrlCPressed) {
+      ctrlLog("-> cancel turn + arm exit");
       cancelCurrent();
-      ctrlCPressed = false;
+      ctrlCPressed = true;
+      setTimeout(() => (ctrlCPressed = false), 2000);
       return;
     }
-    // Idle: a single Ctrl+C exits immediately (Leo: double-press felt broken).
-    if (!running || ctrlCPressed) {
-      tui.stop();
-      process.exit(0);
-    }
-    ctrlCPressed = true;
-    setTimeout(() => (ctrlCPressed = false), 2000);
+    // Idle single press, or any second press: exit.
+    ctrlLog("-> exit");
+    tui.stop();
+    process.exit(0);
   };
   tui.addInputListener((data) => {
     if (data === "\u0003") {
+      ctrlLog("byte \\u0003 received");
       handleCtrlC();
       return { consume: true };
     }
   });
-  process.on("SIGINT", handleCtrlC);
+  process.on("SIGINT", () => {
+    ctrlLog("SIGINT signal received");
+    handleCtrlC();
+  });
 
   tui.start();
 
