@@ -615,12 +615,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       }
       loop = buildLoop();
       loop.seedConversation(history as never[]);
-      // restore cumulative usage from persisted snapshots (Leo: restart 0)
+      // restore cumulative usage from persisted snapshots (Leo: restart 0).
+      // Snapshots are CUMULATIVE (endStreaming writes running totals), so
+      // take the LAST one — summing re-inflates (cur-054 major:
+      // turn1=100,turn2=250 would sum to 350).
       const usage = events
         .filter((e): e is Extract<TraceEvent, { type: "usage" }> => e.type === "usage")
-        .reduce((acc, e) => ({ total: acc.total + e.total, input: acc.input + e.input, output: acc.output + e.output }),
-          { total: 0, input: 0, output: 0 });
-      loop.restoreTokens(usage);
+        .pop() ?? { total: 0, input: 0, output: 0 };
+      loop.restoreTokens({ total: usage.total, input: usage.input, output: usage.output });
       tokensUsed = loop.getTokensUsed(); // TUI copy must match (Leo: resume 0)
       sessionId = id;
       setStatus();
