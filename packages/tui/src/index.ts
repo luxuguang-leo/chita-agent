@@ -362,6 +362,18 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     return /^echo\s+["']?={2,}/.test(cmd) || /^echo\s+["']?-{2,}/.test(cmd) || /^echo\s*$/.test(cmd);
   }
 
+  /** Minimal tool line (omp style): first command word + output line count —
+   *  'ls -lat ~/.hermes/sessions/' -> 'ls · 12 lines'. Full command/output
+   *  via /tool. (Leo: even brief commands flooded the feed.) */
+  function toolLine(cmd: string, toolName: string, output: string): string {
+    if (cmd) {
+      const first = briefCmd(cmd).split(/\s+/)[0] || toolName;
+      const n = output.trim() ? output.trim().split("\n").length : 0;
+      return n > 0 ? `${first} · ${n} lines` : first;
+    }
+    return toolSummary(toolName, output);
+  }
+
           if (ev.type === "tool_call") {
             // remember the command/args — shown next to the result (omp style)
             const a = (ev.tool?.args ?? {}) as Record<string, unknown>;
@@ -389,7 +401,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
                 bannerCount = 0;
               }
               detail = ev.ok
-                ? (cmd ? `\`${briefCmd(cmd)}\`` : toolSummary(ev.toolName, ev.output ?? ""))
+                ? toolLine(cmd, ev.toolName, ev.output ?? "")
                 : `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
               appendMessage("tool", `[${ev.toolName}] ${detail}`);
             }
