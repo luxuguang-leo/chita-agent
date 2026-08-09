@@ -24,6 +24,7 @@ import { CombinedAutocompleteProvider, type SlashCommand } from "../vendor/autoc
 import type { SelectListTheme } from "../vendor/components/select-list.ts";
 import { AgentLoop } from "../../agent/src/loop.ts";
 import { runJudge } from "../../agent/src/judge.ts";
+import { JudgeBudget } from "../../agent/src/judge.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
 import { scrubSecrets } from "../../agent/src/scrub.ts";
 import { loadConfig, apiKey } from "../../cli/src/config.ts";
@@ -111,15 +112,28 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
 
-  // Markdown theme (identity — plain rendering, T2; styling T3)
+  // ANSI colors for role/block styling (T3)
+  const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
+  const yellow = (s: string) => `\x1b[33m${s}\x1b[0m`;
+  const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
+  const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
+  const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
   const mdTheme: MarkdownTheme = {
-    heading: id, link: id, linkUrl: id, code: id, codeBlock: id,
-    codeBlockBorder: id, quote: id, quoteBorder: id, hr: id, listBullet: id,
-    bold: id, italic: id, strikethrough: id, underline: id,
+    heading: (s) => green(s), link: cyan, linkUrl: dim, code: yellow,
+    codeBlock: yellow, codeBlockBorder: dim, quote: gray, quoteBorder: dim,
+    hr: dim, listBullet: green, bold: (s) => `\x1b[1m${s}\x1b[0m`,
+    italic: (s) => `\x1b[3m${s}\x1b[0m`, strikethrough: dim, underline: cyan,
+  };
+  // role prefix colors: user green, tool yellow, system gray, assistant plain
+  const ROLE_COLOR: Record<string, (s: string) => string> = {
+    user: green,
+    tool: yellow,
+    system: gray,
   };
 
   function appendMessage(role: string, content: string): void {
-    messagesBox.addChild(new Markdown(`**${role}** ${content}`, 0, 0, mdTheme));
+    const color = ROLE_COLOR[role] ?? ((s: string) => s);
+    messagesBox.addChild(new Markdown(`**${color(role)}** ${content}`, 0, 0, mdTheme));
     tui.requestRender(true);
   }
 
@@ -217,6 +231,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           const judgeModel =
             process.env.CHITA_JUDGE_MODEL ??
             (cfg.model === "deepseek-v4-pro" ? "deepseek-v4-flash" : "deepseek-v4-pro");
+          // budget gate (v2.1 cost anchors): max 3/session + $10/month persisted
+          const budget = new JudgeBudget({});
+          if (!budget.canInvoke(2000, 0.3)) {
+            appendMessage("system", "/goal: judge budget exhausted (max 3/session or $10/month)");
+            return;
+          }
           const judgeProvider = new OpenAICompatibleProvider({
             baseUrl: "https://api.deepseek.com/v1",
             apiKey: key!, // non-null: TUI exits if CHITA_API_KEY missing at start
@@ -227,6 +247,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           setStatus(" | judging...");
           try {
             const verdict = await runJudge(judgeProvider, loop.getConversation(), goal);
+            budget.record(verdict.tokensUsed || 2000);
             appendMessage(
               "system",
               `/goal verdict: ${verdict.verdict} — ${verdict.reason}${verdict.evidence.length ? ` (evidence: ${verdict.evidence.join("; ")})` : ""}`
