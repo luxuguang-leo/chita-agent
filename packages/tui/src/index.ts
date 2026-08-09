@@ -62,7 +62,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let tokensUsed = 0;
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
-
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Text | null = null;
   let streamingBuffer = "";
@@ -97,14 +96,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   }
 
   function buildLoop(): AgentLoop {
-    const cancel = new AbortController();
-    cancelCurrent = () => cancel.abort();
     return new AgentLoop({
       cwd: process.cwd(),
       provider: makeProvider(),
       mode,
       autoApproveAsk: true,
-      signal: cancel.signal, // Ctrl+C cancels the turn (cur-033 #1)
       hooks: {
         beforeToolCall: async () => true,
         afterToolCall: (_n, result) => {
@@ -162,6 +158,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
     if (!loop) loop = buildLoop();
 
+    // per-turn AbortController (cur-036: one-shot signal pollutes the loop)
+    const turnCancel = new AbortController();
+    cancelCurrent = () => turnCancel.abort();
+    loop.setSignal(turnCancel.signal);
+
     running = true;
     appendMessage("user", value);
     setStatus(" | running...");
@@ -170,9 +171,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       const result = await loop.continue(value); // multi-turn
       if (result.state === "CANCELLED") {
         appendMessage("system", "cancelled");
-      } else if (result.summary) {
-        appendStreamed(result.summary);
       }
+      // summary already streamed via onAssistantMessage; no duplicate append
+      // (cur-036 minor: streamed text vs summary could double-show)
     } catch (e) {
       const msg = e instanceof Error && e.name === "AbortError" ? "cancelled" : String(e);
       appendMessage("system", msg);

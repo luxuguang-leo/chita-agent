@@ -146,3 +146,38 @@ test("continue: abort signal cancels the turn (CANCELLED)", async () => {
   const result = await p;
   expect(result.state).toBe("CANCELLED");
 });
+
+test("abort: cancelled turn does NOT poison next continue (cur-036)", async () => {
+  // turn 1: endless provider + abort -> CANCELLED
+  // turn 2: fresh signal via setSignal -> continues fine
+  let calls = 0;
+  const provider: Provider = {
+    async *chat(_m: ChatMessage[], opts) {
+      calls++;
+      if (calls === 1) {
+        // first turn: yield once, then wait for abort (checking signal)
+        while (true) {
+          if (opts?.signal?.aborted) throw new DOMException("aborted", "AbortError");
+          yield { kind: "message", message: { role: "assistant", content: "tick" } };
+          await new Promise((r) => setTimeout(r, 1));
+        }
+      }
+      yield { kind: "done", summary: "recovered" };
+    },
+  };
+  const loop = new AgentLoop({ cwd: "/tmp", provider });
+
+  // turn 1: abort mid-run
+  const c1 = new AbortController();
+  loop.setSignal(c1.signal);
+  const p1 = loop.continue("first");
+  setTimeout(() => c1.abort(), 20);
+  expect((await p1).state).toBe("CANCELLED");
+
+  // turn 2: fresh signal — must NOT be immediately aborted
+  const c2 = new AbortController();
+  loop.setSignal(c2.signal);
+  const r2 = await loop.continue("second");
+  expect(r2.state).toBe("DONE");
+  expect(r2.summary).toBe("recovered");
+});

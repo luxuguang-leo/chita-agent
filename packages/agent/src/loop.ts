@@ -155,6 +155,15 @@ export class AgentLoop {
   }
 
   /**
+   * Refresh the abort signal for the NEXT turn (cur-036: one-shot
+   * AbortController pollutes the loop — aborted once, aborted forever).
+   * TUI creates a fresh controller per turn and sets it before continue.
+   */
+  setSignal(signal: AbortSignal): void {
+    this.opts.signal = signal;
+  }
+
+  /**
    * seed = restore/inject: sets initial messages (resume from tape, tests).
    * Validates tool pairing — an orphan tool message is rejected (cur-032).
    */
