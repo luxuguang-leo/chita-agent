@@ -67,6 +67,9 @@ export const bashTool: Tool = {
     const command = String(args.command ?? "");
     const timeoutMs = Number(args.timeoutMs ?? 10000);
     if (!command) return { ok: false, error: "command required" };
+    // abort check before execution (T2; mid-command interrupt needs async
+    // spawn, T3)
+    if (ctx.signal?.aborted) return { ok: false, error: "aborted before execution" };
     try {
       const out = execSync(command, {
         cwd: ctx.cwd,

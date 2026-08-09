@@ -80,3 +80,26 @@ test("tokenizeArgs: splits whitespace, respects quotes", () => {
   expect(tokenizeArgs("")).toEqual([]);
   expect(tokenizeArgs("  spaced  out  ")).toEqual(["spaced", "out"]);
 });
+
+test("bash tool: aborted signal skips execution (T2 tool abort)", async () => {
+  const registry = makeRegistry();
+  const abort = new AbortController();
+  abort.abort();
+  const result = await registry.execute(
+    "bash",
+    { command: "echo should-not-run" },
+    { cwd: "/tmp", permission: "allow", signal: abort.signal }
+  );
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("aborted");
+});
+
+test("bash tool: non-aborted signal runs normally", async () => {
+  const registry = makeRegistry();
+  const result = await registry.execute(
+    "bash",
+    { command: "echo ok" },
+    { cwd: "/tmp", permission: "allow", signal: new AbortController().signal }
+  );
+  expect(result.ok).toBe(true);
+});

@@ -365,7 +365,7 @@ export class AgentLoop {
     const last = this.messages[this.messages.length - 1];
     return last?.role === "tool";
   }  private async runTool(name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output?: string; error?: string }> {
-    const ctx: ToolContext = { cwd: this.opts.cwd, permission: "ask" };
+    const ctx: ToolContext = { cwd: this.opts.cwd, permission: "ask", signal: this.opts.signal };
     // Read-only tools default allow; ask stays ask for the hook to decide
     const tool = this.tools.get(name);
     if (tool) ctx.permission = tool.defaultPermission;
