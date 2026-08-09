@@ -123,6 +123,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const messagesBox = new Box();
   const messageScroll = new ScrollView(messagesBox, { follow: "end" });
 
+  // Tool activity region: fixed-height scrollable strip below the chat —
+  // tool calls no longer flood the conversation (Leo: wants scrolling).
+  const toolBox = new Box();
+  const toolScroll = new ScrollView(toolBox, { follow: "end" });
+
   // Editor with slash-command + @file autocomplete (T2)
   const id = (s: string) => s;
   const selectListTheme: SelectListTheme = {
@@ -154,6 +159,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   const root = new VStack([
     { component: messageScroll, grow: 1 },
+    { component: toolScroll, maxSize: 5, shrink: 0 }, // tool strip: scrolls, fixed height
     { component: input },
     { component: new HStack([{ component: statusText }]) },
   ]);
@@ -219,8 +225,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const color = ROLE_COLOR[role] ?? ((s: string) => s);
     // role prefix: color only (no ** bold — that would double-wrap via
     // theme.bold around the ANSI codes, cur-040 minor)
-    messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
-    trimMessages();
+    if (role === "tool") {
+      // tool activity -> dedicated scrolling strip, not the chat (Leo)
+      toolBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
+      trimTools();
+    } else {
+      messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
+      trimMessages();
+    }
     tui.requestRender(true);
   }
 
@@ -233,6 +245,16 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     while (messagesBox.children.length > MAX_VISIBLE) {
       const oldest = messagesBox.children[0];
       if (oldest) messagesBox.removeChild(oldest);
+    }
+  }
+
+  /** Window the tool strip: keep the last MAX_TOOL_LINES tool entries —
+   *  the strip is fixed-height and scrolls, so cap memory/render cost. */
+  function trimTools(): void {
+    const MAX_TOOL_LINES = 40;
+    while (toolBox.children.length > MAX_TOOL_LINES) {
+      const oldest = toolBox.children[0];
+      if (oldest) toolBox.removeChild(oldest);
     }
   }
 
@@ -362,14 +384,19 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     return /^echo\s+["']?={2,}/.test(cmd) || /^echo\s+["']?-{2,}/.test(cmd) || /^echo\s*$/.test(cmd);
   }
 
-  /** Minimal tool line (omp style): first command word + output line count —
-   *  'ls -lat ~/.hermes/sessions/' -> 'ls · 12 lines'. Full command/output
-   *  via /tool. (Leo: even brief commands flooded the feed.) */
+  /** Minimal tool line (omp style): command + first meaningful argument —
+   *  'curl -s https://api…' -> 'curl https://api…'; 'ls -lat ~/x/' ->
+   *  'ls ~/x/'; line count only when >3 lines. Full command/output via
+   *  /tool. (Leo: bare first word ('curl') lost the target.) */
   function toolLine(cmd: string, toolName: string, output: string): string {
     if (cmd) {
-      const first = briefCmd(cmd).split(/\s+/)[0] || toolName;
+      const cleaned = briefCmd(cmd); // noise-stripped
+      const words = cleaned.split(/\s+/).filter(Boolean);
+      const arg = words.slice(1).find((w) => !w.startsWith("-") && !w.startsWith("<"));
+      const display = arg ? `${words[0] ?? toolName} ${arg}` : (words[0] ?? toolName);
+      const short = display.length > 42 ? display.slice(0, 42) + "…" : display;
       const n = output.trim() ? output.trim().split("\n").length : 0;
-      return n > 0 ? `${first} · ${n} lines` : first;
+      return n > 3 ? `${short} · ${n} lines` : short;
     }
     return toolSummary(toolName, output);
   }
