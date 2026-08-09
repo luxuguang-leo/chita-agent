@@ -108,6 +108,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
   let pendingInputs: string[] = []; // FIFO queue while running (cur-038)
+  // TUI-level judge budget singleton (cur-040 major: per-invocation instance
+  // reset the max-3-per-session counter every /goal)
+  const judgeBudget = new JudgeBudget({});
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
@@ -133,7 +136,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   function appendMessage(role: string, content: string): void {
     const color = ROLE_COLOR[role] ?? ((s: string) => s);
-    messagesBox.addChild(new Markdown(`**${color(role)}** ${content}`, 0, 0, mdTheme));
+    // role prefix: color only (no ** bold — that would double-wrap via
+    // theme.bold around the ANSI codes, cur-040 minor)
+    messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme));
     tui.requestRender(true);
   }
 
@@ -179,7 +184,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         onAssistantMessage: (msg) => appendStreamed(msg.content),
         onEvent: (ev) => {
           if (ev.type === "tool_result") {
-            appendMessage("tool", `[${ev.toolName}] ${ev.ok ? "ok" : "error"}`);
+            // folded summary; keep error detail for debugging (cur-040 minor)
+            const detail = ev.ok ? "ok" : `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
+            appendMessage("tool", `[${ev.toolName}] ${detail}`);
           }
         },
       },
@@ -208,6 +215,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           return;
         case "/new":
           loop = null;
+          sessionId = null; // new session unbinds the tape (cur-040 minor)
           appendMessage("system", "new session");
           setStatus();
           return;
@@ -232,8 +240,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             process.env.CHITA_JUDGE_MODEL ??
             (cfg.model === "deepseek-v4-pro" ? "deepseek-v4-flash" : "deepseek-v4-pro");
           // budget gate (v2.1 cost anchors): max 3/session + $10/month persisted
-          const budget = new JudgeBudget({});
-          if (!budget.canInvoke(2000, 0.3)) {
+          // — singleton instance so the session counter survives across /goal calls
+          if (!judgeBudget.canInvoke(2000, 0.3)) {
             appendMessage("system", "/goal: judge budget exhausted (max 3/session or $10/month)");
             return;
           }
@@ -247,7 +255,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           setStatus(" | judging...");
           try {
             const verdict = await runJudge(judgeProvider, loop.getConversation(), goal);
-            budget.record(verdict.tokensUsed || 2000);
+            judgeBudget.record(verdict.tokensUsed || 2000);
             appendMessage(
               "system",
               `/goal verdict: ${verdict.verdict} — ${verdict.reason}${verdict.evidence.length ? ` (evidence: ${verdict.evidence.join("; ")})` : ""}`
