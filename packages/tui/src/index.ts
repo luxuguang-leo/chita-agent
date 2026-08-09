@@ -14,21 +14,38 @@
 import { TuiMainScreen } from "../vendor/tui-main-screen.ts";
 import { ProcessTerminal } from "../vendor/terminal.ts";
 import { ScrollView } from "../vendor/components/scroll-view.ts";
-import { Input } from "../vendor/components/input.ts";
 import { Text } from "../vendor/components/text.ts";
 import { VStack } from "../vendor/components/v-stack.ts";
 import { HStack } from "../vendor/components/h-stack.ts";
 import { Box } from "../vendor/components/box.ts";
+import { Editor, type EditorTheme } from "../vendor/components/editor.ts";
+import { CombinedAutocompleteProvider, type SlashCommand } from "../vendor/autocomplete.ts";
+import type { SelectListTheme } from "../vendor/components/select-list.ts";
 import { AgentLoop } from "../../agent/src/loop.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
 import { scrubSecrets } from "../../agent/src/scrub.ts";
 import { loadConfig, apiKey } from "../../cli/src/config.ts";
+import {
+  KeybindingsManager,
+  setKeybindings,
+  TUI_KEYBINDINGS,
+} from "../vendor/keybindings.ts";
 
 export interface TuiOptions {
   judge?: boolean;
 }
 
 export async function startTui(opts: TuiOptions = {}): Promise<void> {
+  // Enter=submit, Shift+Enter=newline (design §8). Override pi-tui's default
+  // newLine (shift+enter + ctrl+j) — ctrl+j catches bare \n (0x0a), so
+  // Enter would insert a newline instead of submitting.
+  setKeybindings(
+    new KeybindingsManager(TUI_KEYBINDINGS, {
+      "tui.input.newLine": "shift+enter",
+      "tui.input.submit": "enter",
+    })
+  );
+
   const cfg = loadConfig();
   const key = apiKey();
   if (!key) {
@@ -45,7 +62,26 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   const messagesBox = new Box();
   const messageScroll = new ScrollView(messagesBox, { follow: "end" });
-  const input = new Input();
+
+  // Editor with slash-command + @file autocomplete (T2)
+  const id = (s: string) => s;
+  const selectListTheme: SelectListTheme = {
+    selectedPrefix: id,
+    selectedText: id,
+    description: id,
+    scrollInfo: id,
+    noMatch: id,
+  };
+  const editorTheme: EditorTheme = { borderColor: id, selectList: selectListTheme };
+  const input = new Editor(tui, editorTheme);
+  const slashCommands: SlashCommand[] = [
+    { name: "help", description: "show commands" },
+    { name: "new", description: "new session" },
+    { name: "mode", description: "build|plan", argumentHint: "build|plan" },
+    { name: "goal", description: "independent verification" },
+    { name: "exit", description: "leave TUI" },
+  ];
+  input.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, process.cwd()));
   const statusText = new Text("session: new | mode: build | model: " + cfg.model + " | tokens: 0", 0, 0);
 
   const root = new VStack([

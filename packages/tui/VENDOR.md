@@ -27,6 +27,7 @@
 |---|---|
 | 2026-08-09 | vendor 初始拷贝；terminal.ts 移除 native-modifiers import（Shift+Enter native 检测降级为 false） |
 
+
 ## LICENSE（MIT，来自 pi repo）
 
 MIT License
@@ -50,3 +51,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+| 2026-08-09 | components/editor.ts：newLine 分支移除裸 `\n` 兜底——配合 TUI setKeybindings 覆盖，Enter 提交、Shift+Enter 换行（chita 设计 §8） |

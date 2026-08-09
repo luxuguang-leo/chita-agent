@@ -800,8 +800,11 @@ export class Editor implements Component, Focusable {
 			(data.charCodeAt(0) === 10 && data.length > 1) ||
 			data === "\x1b\r" ||
 			data === "\x1b[13;2~" ||
-			(data.length > 1 && data.includes("\x1b") && data.includes("\r")) ||
-			(data === "\n" && data.length === 1)
+			(data.length > 1 && data.includes("\x1b") && data.includes("\r"))
+			// VENDOR PATCH (chita, 2026-08-09): bare "\n" removed from newLine so
+			// Enter submits (design §8: Enter=send, Shift+Enter=newline). The
+			// keybinding override (setKeybindings in TUI) plus this makes Enter
+			// actually reach tui.input.submit.
 		) {
 			if (this.shouldSubmitOnBackslashEnter(data, kb)) {
 				this.handleBackspace();
