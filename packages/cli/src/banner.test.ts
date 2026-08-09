@@ -1,5 +1,5 @@
 /**
- * banner tests — running cheetah logo renders + info columns align.
+ * banner tests — cheetah head logo renders + info columns align.
  */
 
 import { test, expect } from "bun:test";
@@ -7,8 +7,8 @@ import { renderBanner, CHITA_LOGO } from "./banner.ts";
 
 test("logo: all lines monospace-safe, bounded width", () => {
   const widths = CHITA_LOGO.map((l) => l.length);
-  // compact logo: widest line ~ 25 chars
-  expect(Math.max(...widths)).toBeLessThanOrEqual(30);
+  // cheetah-head logo: widest line ~ 56 chars
+  expect(Math.max(...widths)).toBeLessThanOrEqual(60);
   expect(Math.min(...widths)).toBeGreaterThan(5);
 });
 
@@ -19,11 +19,16 @@ test("banner: contains version, model, cwd", () => {
   expect(out).toContain("cwd    ~");
 });
 
-test("banner: cheetah spots present (o/O/0)", () => {
+test("banner: cheetah features present (spots, ears, tear marks)", () => {
   const art = CHITA_LOGO.join("\n");
-  expect(art).toMatch(/[oO0]/);
-  // streamlines: head curve + tail
-  expect(art).toContain("/ \\_,");
+  // spotted coat rendered as . : * clusters
+  expect(art).toMatch(/[:*.]/);
+  // ears (top corners)
+  expect(art).toContain(".-:");
+  expect(art).toContain(".:-");
+  // signature tear marks: eye-to-cheek vertical lines
+  expect(art).toContain(":");
+  expect(art).toContain("+");
 });
 
 test("banner: task info truncated to 40 chars", () => {

@@ -1,12 +1,10 @@
 /**
- * chita startup banner — running cheetah ASCII logo with spots.
+ * chita startup banner — cheetah head with tear marks.
  *
- * Based on the classic cheetah ASCII art (ascii.co.uk, atc variant):
- * streamlined head, o/O/0 spots, arched back, tail. Rendered as a compact
- * 12-line logo. All monospace-safe.
- *
- * Layout mirrors the reference launch banner: logo left, info right
- * (version / model / cwd aligned columns).
+ * Rendered from the Vecteezy cheetah mascot artwork via PIL grayscale->ASCII
+ * (60 cols), with the signature black tear marks (eye-to-cheek lines)
+ * manually reinforced — they were lost when the full art was downscaled.
+ * 27 lines, monospace-safe, bright-on-dark friendly.
  */
 
 export interface BannerInfo {
@@ -17,18 +15,33 @@ export interface BannerInfo {
 }
 
 export const CHITA_LOGO = [
-  "       _",
-  "      / \\_,",
-  "     !   `  `-._",
-  "  ___/i._\\ }_/-'`-,",
-  " '      //  ---//-'",
-  "       /       /'",
-  "     ,'o O o 0,'-.",
-  "    :'o O 0/ 0 )__,",
-  "    /o 0 0(),| o/-'",
-  "    |`,,'  `._/0|\\',",
-  "    |O|  `._/ \\o'||o",
-  "     \\|    `._)  /(",
+  "     .-:.                                          .:-",
+  "    :*::-==-:                                  :-==-:-*.",
+  "   .#.     .-+=.     .:-=====--====--:.     .=+-.     .#",
+  "   += ...::.  :+=.-==-:      ::      :-==-.++:  .:::.. +=",
+  "   *:      :=:  -#:    =:    *+    :=    :*-  :=:      -*",
+  "   *=        :-     .  ::          .:  .     -:        =+",
+  "   :#        .+.   :+      *:  :*      +:   .+:        #:",
+  "    ++     :=:           . :.  .: .           :--     *+",
+  "     ++   --      -=    .+.      .+.    -:      --   *+",
+  "      -*- +   =:  .:       :    :       :.  .-   * -*-",
+  "        -#:   -     ..     +.  .+     ..    .-   :#-",
+  "        :* -     -=-=#+-   +    +   -*#=:=-     -.*.",
+  "        =+.= -   .=:*#--# :      : #:=#+:=    - -:+=",
+  "        -#  .=  .  ::::=%-        =#=::::  .  =.  #:",
+  "         %.     =-       +        +       -+     .#",
+  "         -#  +          .=        =.         .*  *-",
+  "          ++ :    :     +.        .+     :.   . ++",
+  "           ++    .+    =:          :=    =.    ++",
+  "            -*:      .=:            :=.      :*-",
+  "             .++    --  =: ..  .. --  =:    ++.",
+  "               -*  --    +#+-::-+#+    =-  *-",
+  "                *+:*:. .  :=*..*+. .  :-#.+*",
+  "              ..:#.*-. . .   ==   . . .-#:%...",
+  "               :.*:-*-       *+       -#--#..",
+  "                 #=  -+::::------::::+=. -#",
+  "                -#    *-..       ...=*    #:",
+  "                =-     *.          .*     =+",
 ] as const;
 
 /**
