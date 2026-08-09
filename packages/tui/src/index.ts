@@ -23,6 +23,7 @@ import { Editor, type EditorTheme } from "../vendor/components/editor.ts";
 import { CombinedAutocompleteProvider, type SlashCommand } from "../vendor/autocomplete.ts";
 import type { SelectListTheme } from "../vendor/components/select-list.ts";
 import { AgentLoop } from "../../agent/src/loop.ts";
+import { runJudge } from "../../agent/src/judge.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
 import { scrubSecrets } from "../../agent/src/scrub.ts";
 import { loadConfig, apiKey } from "../../cli/src/config.ts";
@@ -102,6 +103,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let tokensUsed = 0;
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
+  let pendingInput: string | null = null; // queued while running
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
@@ -169,8 +171,17 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   async function onSubmit(raw: string): Promise<void> {
     const value = raw.trim();
-    if (!value || running) return; // re-entrancy lock
+    if (!value) return;
+    if (running) {
+      // queue for replay after the current turn (don't drop input)
+      pendingInput = value;
+      return;
+    }
+    await handleTurn(value);
+  }
 
+  /** The actual turn handler (slash or model task). */
+  async function handleTurn(value: string): Promise<void> {
     // local slash commands (never to the model)
     if (value.startsWith("/")) {
       const cmd = value.split(/\s+/)[0];
@@ -194,9 +205,32 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           setStatus();
           return;
         }
-        case "/goal":
-          appendMessage("system", "/goal: independent verification (full wiring in T2)");
+        case "/goal": {
+          if (!loop) {
+            appendMessage("system", "/goal: run a task first");
+            return;
+          }
+          const goal = value.split(/\s+/).slice(1).join(" ") || "complete the current task";
+          const judgeModel =
+            process.env.CHITA_JUDGE_MODEL ??
+            (cfg.model === "deepseek-v4-pro" ? "deepseek-v4-flash" : "deepseek-v4-pro");
+          const judgeProvider = new OpenAICompatibleProvider({
+            baseUrl: "https://api.deepseek.com/v1",
+            apiKey: key!, // non-null: TUI exits if CHITA_API_KEY missing at start
+            model: judgeModel,
+          });
+          appendMessage("system", `/goal: judging with ${judgeModel}...`);
+          try {
+            const verdict = await runJudge(judgeProvider, loop.getConversation(), goal);
+            appendMessage(
+              "system",
+              `/goal verdict: ${verdict.verdict} — ${verdict.reason}${verdict.evidence.length ? ` (evidence: ${verdict.evidence.join("; ")})` : ""}`
+            );
+          } catch (e) {
+            appendMessage("system", `/goal failed: ${String(e)}`);
+          }
           return;
+        }
         case "/tree": {
           const roots = buildSessionTree(process.cwd());
           if (roots.length === 0) {
@@ -291,6 +325,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       running = false;
       cancelCurrent = null;
       setStatus();
+      // replay input queued while this turn was running
+      if (pendingInput) {
+        const next = pendingInput;
+        pendingInput = null;
+        void handleTurn(next);
+      }
     }
   }
 
