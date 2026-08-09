@@ -159,7 +159,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   const root = new VStack([
     { component: messageScroll, grow: 1 },
-    { component: toolScroll, maxSize: 5, shrink: 0 }, // tool strip: scrolls, fixed height
+    { component: toolScroll, basis: 5, shrink: 0, grow: 0 }, // fixed 5 rows: input position stable (Leo)
     { component: input },
     { component: new HStack([{ component: statusText }]) },
   ]);
