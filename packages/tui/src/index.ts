@@ -147,7 +147,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   ];
   input.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, process.cwd()));
   const statusText = new Text(
-    "session: new | mode: build | model: " + cfg.model + ` | ↑0 ↓0 | ctx 0/${cfg.contextWindow ?? 131_072} (0%)`,
+    "session: new | mode: build | model: " + cfg.model + ` | ↑0 ↓0 | ctx 0/${fmtTokens(cfg.contextWindow ?? 131_072)} (0%)`,
     0,
     0
   );
@@ -272,6 +272,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     streamingBuffer = "";
   }
 
+  /** Human-readable token count (omp style): 4615 -> 4.5K, 1048576 -> 1M */
+  function fmtTokens(n: number): string {
+    if (n >= 1_048_576) return (n / 1_048_576).toFixed(1).replace(/\.0$/, "") + "M";
+    if (n >= 1024) return (n / 1024).toFixed(1).replace(/\.0$/, "") + "K";
+    return String(n);
+  }
+
   function setStatus(suffix = ""): void {
     const sid = sessionId ? sessionId.slice(-8) : "new"; // short id (cur-042)
     const ctx = cfg.contextWindow ?? 131_072;
@@ -287,7 +294,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const pct = ctx > 0 ? Math.round((cur / ctx) * 100) : 0;
     statusText.setText(
       `session: ${sid} | mode: ${mode} | model: ${cfg.model} | ` +
-        `↑${tokensUsed.input} ↓${tokensUsed.output} | ctx ${cur}/${ctx} (${pct}%)${suffix}`
+        `↑${fmtTokens(tokensUsed.input)} ↓${fmtTokens(tokensUsed.output)} | ctx ${fmtTokens(cur)}/${fmtTokens(ctx)} (${pct}%)${suffix}`
     );
     tui.requestRender(true);
   }
