@@ -134,17 +134,32 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     return secret;
   };
 
-  console.log(
-    "\nchita needs an API key to run tasks (OpenAI-compatible provider).\n" +
-      "The key is your credential — stored only in ~/.chita/.env, never in\n" +
-      `config.json. Get one: https://platform.deepseek.com\n`
-  );
-
   // Reuse existing provider/model from config.json if present — don't re-ask
   // what's already configured (Leo: "再进入还要我提示选模型和 API key").
   // Only the API key is strictly required each time.
   const existing = loadConfig();
   const hasModel = existing.model && existing.model !== "deepseek-chat"; // default = unconfigured
+
+  if (hasModel) {
+    // configured model — the missing piece is just the key credential
+    console.log(
+      `✓ model configured: ${existing.model}\n` +
+        `  (change via ~/.chita/config.json)\n` +
+        `\n` +
+        `chita needs an API key to run tasks — the key is a credential,\n` +
+        `stored only in ~/.chita/.env (never in config.json). It's missing.\n` +
+        `\n` +
+        `Get a key: https://platform.deepseek.com\n`
+    );
+  } else {
+    // no model configured — full first-run setup
+    console.log(
+      "\nYou haven't configured chita yet. Setup takes 30 seconds:\n" +
+        "1. choose a provider\n" +
+        "2. paste your API key (credential — stored only in ~/.chita/.env)\n" +
+        `   get one: https://platform.deepseek.com\n`
+    );
+  }
 
   let provider: ProviderChoice;
   let model: string;
@@ -153,16 +168,6 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     const known = PROVIDERS.find((p) => p.defaultModel === existing.model);
     provider = known ?? PROVIDERS[0];
     model = existing.model;
-    console.log(
-      `✓ model configured: ${provider.label} / ${model}\n` +
-        `  (change via ~/.chita/config.json)\n` +
-        `\n` +
-        `Your API key is a credential — it is NOT stored in config.json\n` +
-        `(security: keys never live in plain config). It goes in\n` +
-        `~/.chita/.env, and it's currently missing.\n` +
-        `\n` +
-        `Get a key: https://platform.deepseek.com (DeepSeek)\n`
-    );
   } else {
     // 1. provider
     console.log("Choose a provider:");

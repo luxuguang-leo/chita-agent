@@ -488,6 +488,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       tokensUsed = loop.getTokensUsed(); // real usage from provider (cur-045)
       if (result.state === "CANCELLED") {
         appendMessage("system", "cancelled");
+      } else if (result.state === "ERROR" && result.error) {
+        appendMessage("system", `error: ${result.error.slice(0, 160)}`);
       }
       // summary already streamed via onAssistantMessage; no duplicate append
       // (cur-036 minor: streamed text vs summary could double-show)

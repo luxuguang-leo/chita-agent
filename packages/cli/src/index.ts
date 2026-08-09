@@ -79,6 +79,14 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
   printBanner({ version: VERSION, model: cfg.model, cwd: process.cwd(), task });
   const outcome = await loop.run(task);
   console.log(`\n[chita] state: ${outcome.state}${outcome.summary ? ` | ${outcome.summary}` : ""}`);
+  if (outcome.error) {
+    console.error(`\n[chita] error: ${outcome.error.slice(0, 300)}`);
+    // key problems deserve a direct, actionable hint (Leo: "KEY不对 则报另外错误")
+    if (/401|invalid api key|authentication|unauthorized/i.test(outcome.error)) {
+      console.error("-> your API key looks invalid/expired. Fix it and retry:");
+      console.error("   run `chita` and re-enter the key, or edit ~/.chita/.env");
+    }
+  }
   if (outcome.state !== "DONE") process.exitCode = 1;
 
   // /goal judge (v2.1 §2.2, M4): independent verification on done().

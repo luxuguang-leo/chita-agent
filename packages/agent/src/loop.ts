@@ -140,7 +140,7 @@ export class AgentLoop {
    * run = NEW session: resets messages to [{user: initialTask}] then runs.
    * (TUI must NOT use run for multi-turn — use continue(), cur-032.)
    */
-  async run(initialTask: string): Promise<{ state: LoopState; summary?: string }> {
+  async run(initialTask: string): Promise<{ state: LoopState; summary?: string; error?: string }> {
     this.state = "THINKING";
     this.messages = [{ role: "user", content: initialTask }];
     return this.runLoop();
@@ -151,7 +151,7 @@ export class AgentLoop {
    * conversation and runs one more loop (no reset). Multi-turn continuity
    * keeps tool_call/tool pairing and tape consistency (cur-031 blocker).
    */
-  async continue(userMessage: string): Promise<{ state: LoopState; summary?: string }> {
+  async continue(userMessage: string): Promise<{ state: LoopState; summary?: string; error?: string }> {
     this.messages.push({ role: "user", content: userMessage });
     return this.runLoop();
   }
@@ -187,7 +187,7 @@ export class AgentLoop {
   }
 
   /** The shared inner loop (run/continue both enter here). */
-  private async runLoop(): Promise<{ state: LoopState; summary?: string }> {
+  private async runLoop(): Promise<{ state: LoopState; summary?: string; error?: string }> {
     const maxIter = this.opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     const maxTokens = this.opts.maxTokens ?? DEFAULT_MAX_TOKENS;
 
@@ -308,7 +308,7 @@ export class AgentLoop {
             if (shouldTerminate) {
               this.state = "ERROR";
               this.opts.hooks?.onSessionEnd?.(this.state);
-              return { state: this.state };
+              return { state: this.state, error: msg };
             }
             // flush streamed assistant text so compaction has content (F1×F3)
             if (pendingAssistant) {
@@ -321,7 +321,7 @@ export class AgentLoop {
             if (!report.truncated) {
               this.state = "ERROR";
               this.opts.hooks?.onSessionEnd?.(this.state);
-              return { state: this.state };
+              return { state: this.state, error: msg };
             }
             this.messages = compacted;
             this.messages.push({ role: "system", content: report.note ?? "" });
@@ -338,7 +338,7 @@ export class AgentLoop {
             faultSide: "env",
             ts: new Date().toISOString(),
           });
-          return { state: this.state };
+          return { state: this.state, error: msg };
         }
       }
 
