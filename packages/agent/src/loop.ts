@@ -255,6 +255,15 @@ export class AgentLoop {
                 this.messages.push(pendingAssistant);
                 pendingAssistant = null;
               }
+              // observability: tell the UI what command/args ran (cur-044+:
+              // TUI shows the tool call; omp/hermes style shows the command)
+              this.opts.hooks?.onEvent?.({
+                seq: this.iterations,
+                type: "tool_call",
+                tool: { name: ev.toolName, args: ev.args, permission: "allow" },
+                callId: ev.callId,
+                ts: new Date().toISOString(),
+              });
               const result = await this.runTool(ev.toolName, ev.args ?? {}, ev.callId);
               this.state = "OBSERVING";
               // tool result back to the model as a tool message (OpenAI requires
