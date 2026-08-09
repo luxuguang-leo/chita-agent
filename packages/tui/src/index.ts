@@ -81,6 +81,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const slashCommands: SlashCommand[] = [
     { name: "help", description: "show commands" },
     { name: "new", description: "new session" },
+    { name: "tree", description: "show session tree" },
+    { name: "resume", description: "resume session", argumentHint: "<session-id>" },
+    { name: "fork", description: "fork current session" },
     { name: "mode", description: "build|plan", argumentHint: "build|plan" },
     { name: "goal", description: "independent verification" },
     { name: "exit", description: "leave TUI" },
@@ -103,7 +106,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let tokensUsed = 0;
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
-  let pendingInput: string | null = null; // queued while running
+  let pendingInputs: string[] = []; // FIFO queue while running (cur-038)
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
@@ -173,8 +176,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const value = raw.trim();
     if (!value) return;
     if (running) {
-      // queue for replay after the current turn (don't drop input)
-      pendingInput = value;
+      // FIFO queue for replay after the current turn (don't drop input)
+      pendingInputs.push(value);
       return;
     }
     await handleTurn(value);
@@ -220,6 +223,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             model: judgeModel,
           });
           appendMessage("system", `/goal: judging with ${judgeModel}...`);
+          running = true; // judge is a long op — block re-entrancy (cur-038)
+          setStatus(" | judging...");
           try {
             const verdict = await runJudge(judgeProvider, loop.getConversation(), goal);
             appendMessage(
@@ -228,6 +233,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             );
           } catch (e) {
             appendMessage("system", `/goal failed: ${String(e)}`);
+          } finally {
+            running = false;
+            setStatus();
           }
           return;
         }
@@ -256,16 +264,26 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           }
           try {
             const tape = Tape.open(process.cwd(), id);
-            const history = tape.readAll().map((ev) =>
-              ev.type === "message"
-                ? { role: ev.role, content: ev.content } as const
-                : ev.type === "tool_result"
-                  ? { role: "tool" as const, name: ev.toolName, toolCallId: ev.callId, content: ev.output ?? "" }
-                  : { role: "system" as const, content: JSON.stringify(ev) }
-            );
+            const history: { role: string; content: string }[] = [];
+            const events = tape.readAll();
             tape.close();
+            // map only complete tool pairs + messages; skip orphan/meta
+            // (cur-038 minor: seedConversation rejects orphan tools)
+            for (const ev of events) {
+              if (ev.type === "message") {
+                // message role is never "tool" (TraceRole excludes it)
+                history.push({ role: ev.role, content: ev.content });
+              } else if (ev.type === "tool_result") {
+                const prev = history[history.length - 1];
+                if (prev && prev.role === "assistant") {
+                  history.push({ role: "tool", content: ev.output ?? ev.error ?? "" });
+                }
+                // orphan tool_result without preceding assistant: skip
+              }
+            }
             loop = buildLoop();
             loop.seedConversation(history as never[]);
+            sessionId = id;
             appendMessage("system", `resumed ${id} (${history.length} messages)`);
             setStatus();
           } catch (e) {
@@ -301,6 +319,27 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
     if (!loop) loop = buildLoop();
 
+    // bind a real tape session on first turn (cur-038 major: /fork and
+    // /tree need a real sessionId, not a timestamp placeholder)
+    if (!sessionId) {
+      sessionId = `sess-${Date.now().toString(36)}`;
+      const tape = Tape.open(process.cwd(), sessionId);
+      tape.appendMeta({
+        sessionId,
+        cwd: process.cwd(),
+        model: cfg.model,
+        provider: "openai-compatible",
+        createdAt: new Date().toISOString(),
+      });
+      tape.append({ type: "message", role: "user", content: value } as never);
+      tape.close();
+    } else {
+      // append the new user turn to the existing session tape
+      const tape = Tape.open(process.cwd(), sessionId);
+      tape.append({ type: "message", role: "user", content: value } as never);
+      tape.close();
+    }
+
     // per-turn AbortController (cur-036: one-shot signal pollutes the loop)
     const turnCancel = new AbortController();
     cancelCurrent = () => turnCancel.abort();
@@ -325,10 +364,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       running = false;
       cancelCurrent = null;
       setStatus();
-      // replay input queued while this turn was running
-      if (pendingInput) {
-        const next = pendingInput;
-        pendingInput = null;
+      // replay inputs queued while this turn was running (FIFO)
+      if (pendingInputs.length > 0) {
+        const next = pendingInputs.shift()!;
         void handleTurn(next);
       }
     }
