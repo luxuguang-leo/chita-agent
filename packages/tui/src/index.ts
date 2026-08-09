@@ -320,6 +320,20 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           appendStreamed(msg.content);
         },
         onEvent: (ev) => {
+  /** Brief command for the tool line: strip redirection/noise, keep first
+   *  two words (omp style). 'ls -la ~/.agents 2>/dev/null; echo ---' ->
+   *  'ls -la …'. Full command stays in /tool. (Leo: long cmd text = noise.) */
+  function briefCmd(cmd: string): string {
+    const cleaned = cmd
+      .replace(/\s*2>\s*\/dev\/null/g, "")
+      .replace(/\s*>\s*\/dev\/null/g, "")
+      .replace(/\s*\|\s*head(\s+-\d+)?.*$/, "")
+      .replace(/;\s*echo\s+["'-]+.*$/, "")
+      .trim();
+    if (cleaned.length <= 34) return cleaned;
+    return cleaned.split(/\s+/).slice(0, 2).join(" ") + "…";
+  }
+
   /** Condensed tool summary for the message area (omp/hermes style): skip
    *  decoration-only lines (===, ---, ***, ...), extract "=== TITLE ==="
    *  markers, append line count when the output is long. Full output stays
@@ -359,7 +373,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             let detail: string;
             if (ev.ok) {
               const cmd = lastToolCmd.get(ev.callId ?? ev.toolName) ?? "";
-              detail = cmd ? `\`${cmd.slice(0, 50)}\`` : toolSummary(ev.toolName, ev.output ?? "");
+              detail = cmd ? `\`${briefCmd(cmd)}\`` : toolSummary(ev.toolName, ev.output ?? "");
             } else {
               detail = `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
             }
