@@ -457,6 +457,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
     try {
       const result = await loop.continue(value); // multi-turn
+      tokensUsed = loop.getTokensUsed(); // real usage from provider (cur-045)
       if (result.state === "CANCELLED") {
         appendMessage("system", "cancelled");
       }

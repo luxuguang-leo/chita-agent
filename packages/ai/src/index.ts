@@ -183,6 +183,13 @@ export class OpenAICompatibleProvider {
         }
       }
     }
+    // Emit usage unconditionally (cur-045: token stats broke when tool calls
+    // suppressed the done-with-usage path; loop accumulates ev.usage regardless
+    // of kind)
+    if (usage) {
+      yield { kind: "usage", usage: { tokens: usage.total_tokens } };
+    }
+
     // Final: emit done ONLY when there were no tool calls. If the model
     // requested tools, the loop executes them and feeds results back for the
     // next turn — emitting done here would terminate mid-toolchain (real

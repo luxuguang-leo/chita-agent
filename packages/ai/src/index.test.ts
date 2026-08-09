@@ -176,3 +176,34 @@ test("non-200 response throws", async () => {
     server.stop(true);
   }
 });
+
+test("usage emitted even with tool calls (cur-045 token stats)", async () => {
+  const { url, stop } = startMockServer({
+    chunks: [
+      {
+        id: "1",
+        choices: [
+          {
+            index: 0,
+            delta: { tool_calls: [{ index: 0, function: { name: "read", arguments: "{}" } }] },
+          },
+        ],
+      },
+    ],
+    extra: "data: {\"id\":\"2\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":{\"total_tokens\":77}}\n\ndata: [DONE]\n\n",
+  });
+  try {
+    const p = makeProvider(url);
+    const events = [];
+    for await (const ev of p.chat([{ role: "user", content: "read" }])) {
+      events.push(ev);
+    }
+    const usageEv = events.find((e) => e.kind === "usage");
+    expect(usageEv).toBeDefined();
+    expect(usageEv!.usage?.tokens).toBe(77);
+    // done must NOT fire after tool calls (toolchain continues)
+    expect(events.find((e) => e.kind === "done")).toBeUndefined();
+  } finally {
+    stop();
+  }
+});

@@ -35,7 +35,7 @@ export interface ChatMessage {
 }
 
 export interface StreamEvent {
-  kind: "message" | "tool_call" | "tool_result" | "done";
+  kind: "message" | "tool_call" | "tool_result" | "done" | "usage";
   message?: ChatMessage;
   toolName?: string;
   args?: Record<string, unknown>;
@@ -155,12 +155,17 @@ export class AgentLoop {
   }
 
   /**
-   * Refresh the abort signal for the NEXT turn (cur-036: one-shot
+  /** Refresh the abort signal for the NEXT turn (cur-036: one-shot
    * AbortController pollutes the loop — aborted once, aborted forever).
    * TUI creates a fresh controller per turn and sets it before continue.
    */
   setSignal(signal: AbortSignal): void {
     this.opts.signal = signal;
+  }
+
+  /** Tokens consumed across all turns (for UI status, cur-045). */
+  getTokensUsed(): number {
+    return this.tokensUsed;
   }
 
   /**
