@@ -27,6 +27,11 @@ export const PROVIDERS: ProviderChoice[] = [
 
 /** Interactive setup: choose provider, paste key, write ~/.chita/.env. */
 export async function runSetup(): Promise<{ ok: boolean; message: string }> {
+  // Ensure the terminal cursor is visible — a hidden cursor (e.g. left over
+  // from a previous fullscreen app) makes the input position invisible
+  // (Leo: "没有提示光标输入，看不到以为没有输入位置").
+  process.stdout.write("\x1b[?25h");
+
   // bun's stream/readline stdin events are unreliable for piped input;
   // read synchronously (works for both TTY line input and piped stdin).
   const fd = 0;
@@ -45,8 +50,10 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
       syncBuf += chunk.toString("utf8", 0, n);
     }
   };
+  // Prominent prompt: bright/underlined marker + cursor-show, so the input
+  // position is obvious even if the terminal cursor doesn't blink visibly.
   const question = (q: string): Promise<string> => {
-    process.stdout.write(q);
+    process.stdout.write(`\x1b[?25h\x1b[1;36m${q}\x1b[0m`);
     return Promise.resolve(readLineSync());
   };
 
@@ -75,7 +82,7 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
       }
       if (c === "\u0015") { // Ctrl+U: clear line
         process.stdout.write("\r\u001b[K");
-        process.stdout.write("  API key: ");
+        process.stdout.write("\x1b[?25h\x1b[1;36m  API key: \x1b[0m");
         secret = "";
         continue;
       }
@@ -150,7 +157,7 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
   }
 
   // 4. API key — masked (echoes *, never plaintext; Leo: pasting showed it)
-  process.stdout.write("  API key: ");
+  process.stdout.write("\x1b[?25h\x1b[1;36m  API key: \x1b[0m");
   let key = "";
   try {
     key = (await Promise.resolve(readSecretSync())).trim();
