@@ -215,6 +215,9 @@ export interface MarkdownTheme {
 	highlightCode?: (code: string, lang?: string) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
+	/** Table border characters (┌─│┐...) — some fonts render them black/invisible;
+	 *  coloring them guarantees visibility (Leo: iTerm2 hides table borders). */
+	tableBorder?: (text: string) => string;
 }
 
 export interface MarkdownOptions {
@@ -834,6 +837,10 @@ export class Markdown implements Component {
 	 * Render a table with width-aware cell wrapping.
 	 * Cells that don't fit are wrapped to multiple lines.
 	 */
+	private tableBorder(text: string): string {
+		return this.theme.tableBorder ? this.theme.tableBorder(text) : text;
+	}
+
 	private renderTable(
 		token: Tokens.Table,
 		availableWidth: number,
@@ -953,7 +960,7 @@ export class Markdown implements Component {
 
 		// Render top border
 		const topBorderCells = columnWidths.map((w) => "─".repeat(w));
-		lines.push(`┌─${topBorderCells.join("─┬─")}─┐`);
+		lines.push(this.tableBorder(`┌─${topBorderCells.join("─┬─")}─┐`));
 
 		// Render header with wrapping
 		const headerCellLines: string[][] = token.header.map((cell, i) => {
@@ -968,13 +975,13 @@ export class Markdown implements Component {
 				const padded = text + " ".repeat(Math.max(0, columnWidths[colIdx] - visibleWidth(text)));
 				return this.theme.bold(padded);
 			});
-			lines.push(`│ ${rowParts.join(" │ ")} │`);
+			lines.push(this.tableBorder(`│ ${rowParts.join(" │ ")} │`));
 		}
 
 		// Render separator
 		const separatorCells = columnWidths.map((w) => "─".repeat(w));
 		const separatorLine = `├─${separatorCells.join("─┼─")}─┤`;
-		lines.push(separatorLine);
+		lines.push(this.tableBorder(separatorLine));
 
 		// Render rows with wrapping
 		for (let rowIndex = 0; rowIndex < token.rows.length; rowIndex++) {
@@ -990,7 +997,7 @@ export class Markdown implements Component {
 					const text = cellLines[lineIdx] || "";
 					return text + " ".repeat(Math.max(0, columnWidths[colIdx] - visibleWidth(text)));
 				});
-				lines.push(`│ ${rowParts.join(" │ ")} │`);
+				lines.push(this.tableBorder(`│ ${rowParts.join(" │ ")} │`));
 			}
 
 			if (rowIndex < token.rows.length - 1) {
@@ -1000,7 +1007,7 @@ export class Markdown implements Component {
 
 		// Render bottom border
 		const bottomBorderCells = columnWidths.map((w) => "─".repeat(w));
-		lines.push(`└─${bottomBorderCells.join("─┴─")}─┘`);
+		lines.push(this.tableBorder(`└─${bottomBorderCells.join("─┴─")}─┘`));
 
 		if (nextTokenType && nextTokenType !== "space") {
 			lines.push(""); // Add spacing after table

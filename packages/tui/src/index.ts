@@ -152,6 +152,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     codeBlock: yellow, codeBlockBorder: dim, quote: gray, quoteBorder: dim,
     hr: dim, listBullet: green, bold: (s) => `\x1b[1m${s}\x1b[0m`,
     italic: (s) => `\x1b[3m${s}\x1b[0m`, strikethrough: dim, underline: cyan,
+    // table frames — some fonts render box chars black/invisible (Leo)
+    tableBorder: cyan,
   };
   // role prefix colors: user green, tool yellow, system gray, assistant plain
   const ROLE_COLOR: Record<string, (s: string) => string> = {
