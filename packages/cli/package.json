@@ -6,6 +6,7 @@
   "main": "src/index.ts",
   "dependencies": {
     "@chita/agent": "0.0.0",
-    "@chita/ai": "0.0.0"
+    "@chita/ai": "0.0.0",
+    "@chita/tui": "0.0.0"
   }
 }

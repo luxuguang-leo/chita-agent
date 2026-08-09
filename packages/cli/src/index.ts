@@ -92,12 +92,20 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
-  if (args.length === 0 || args.includes("-h") || args.includes("--help")) {
+  // bare `chita` with no args -> interactive TUI (T1 acceptance #1)
+  if (args.length === 0) {
+    const { startTui } = await import("@chita/tui/src/index.ts");
+    await startTui();
+    return;
+  }
+
+  if (args.includes("-h") || args.includes("--help")) {
     console.log(
       [
         "chita — a local terminal coding agent",
         "",
         "Usage:",
+        "  chita                    interactive TUI",
         "  chita --version          print version",
         "  chita init               generate ~/.chita/config.json",
         '  chita "task"             run a task (--print mode)',
