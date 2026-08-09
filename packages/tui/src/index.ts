@@ -87,6 +87,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     { name: "fork", description: "fork current session" },
     { name: "mode", description: "build|plan", argumentHint: "build|plan" },
     { name: "goal", description: "independent verification" },
+    { name: "tool", description: "expand a tool result", argumentHint: "<name>" },
     { name: "exit", description: "leave TUI" },
   ];
   input.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, process.cwd()));
@@ -103,6 +104,18 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // --- session state ---
   let loop: AgentLoop | null = null;
   let sessionId: string | null = null; // bound to the active tape session
+
+  // persist a trace event to the session tape (cur-042: all turns, not just user)
+  const tapeAppend = (ev: unknown) => {
+    if (!sessionId) return;
+    try {
+      const tape = Tape.open(process.cwd(), sessionId);
+      tape.append(ev as never);
+      tape.close();
+    } catch {
+      // tape write is best-effort; never break the turn for it
+    }
+  };
   let mode: "build" | "plan" = "build";
   let tokensUsed = 0;
   let running = false; // re-entrancy lock (cur-033 #6)
@@ -111,6 +124,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // TUI-level judge budget singleton (cur-040 major: per-invocation instance
   // reset the max-3-per-session counter every /goal)
   const judgeBudget = new JudgeBudget({});
+  // last tool results per name (for /tool <name> full expansion, cur-042)
+  const toolResults = new Map<string, { ok: boolean; output?: string; error?: string }>();
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
@@ -139,7 +154,18 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // role prefix: color only (no ** bold — that would double-wrap via
     // theme.bold around the ANSI codes, cur-040 minor)
     messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme));
+    trimMessages();
     tui.requestRender(true);
+  }
+
+  /** Window the message area: drop oldest rows past MAX_VISIBLE (cur-042
+   *  virtualization; full history stays in the tape). */
+  function trimMessages(): void {
+    const MAX_VISIBLE = 200;
+    while (messagesBox.children.length > MAX_VISIBLE) {
+      const oldest = messagesBox.children.shift();
+      if (oldest) messagesBox.removeChild(oldest);
+    }
   }
 
   /** Streaming: accumulate into one row, update in place (cur-033 #3 refinement) */
@@ -151,6 +177,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     } else {
       streamingText.setText(`**assistant** ${streamingBuffer}`);
     }
+    trimMessages();
     tui.requestRender(true);
   }
 
@@ -160,8 +187,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   }
 
   function setStatus(suffix = ""): void {
+    const sid = sessionId ? sessionId.slice(-8) : "new"; // short id (cur-042)
     statusText.setText(
-      `session: ${loop ? "active" : "new"} | mode: ${mode} | model: ${cfg.model} | tokens: ${tokensUsed}${suffix}`
+      `session: ${sid} | mode: ${mode} | model: ${cfg.model} | tokens: ${tokensUsed}${suffix}`
     );
     tui.requestRender(true);
   }
@@ -180,13 +208,27 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             return { ok: result.ok, output: scrubbed.text, redacted: scrubbed.redacted };
           }
         },
-        // streaming assistant text rendered live (cur-033 #3)
-        onAssistantMessage: (msg) => appendStreamed(msg.content),
+        // streaming assistant text rendered live (cur-033 #3) + persisted
+        onAssistantMessage: (msg) => {
+          appendStreamed(msg.content);
+          tapeAppend({ type: "message", role: "assistant", content: msg.content });
+        },
         onEvent: (ev) => {
           if (ev.type === "tool_result") {
             // folded summary; keep error detail for debugging (cur-040 minor)
             const detail = ev.ok ? "ok" : `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
             appendMessage("tool", `[${ev.toolName}] ${detail}`);
+            // remember full result for /tool expansion (cur-042)
+            toolResults.set(ev.toolName, { ok: ev.ok, output: ev.output, error: ev.error });
+            // persist tool result to tape (cur-042)
+            tapeAppend({
+              type: "tool_result",
+              toolName: ev.toolName,
+              ok: ev.ok,
+              output: ev.output,
+              error: ev.error,
+              callId: ev.callId,
+            });
           }
         },
       },
@@ -196,6 +238,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   async function onSubmit(raw: string): Promise<void> {
     const value = raw.trim();
     if (!value) return;
+    // record non-slash task prompts in editor history (↑↓ navigation)
+    if (!value.startsWith("/")) input.addToHistory(value);
     if (running) {
       // FIFO queue for replay after the current turn (don't drop input)
       pendingInputs.push(value);
@@ -211,8 +255,22 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       const cmd = value.split(/\s+/)[0];
       switch (cmd) {
         case "/help":
-          appendMessage("system", "/help /new /tree /resume <id> /fork /mode build|plan /goal /exit");
+          appendMessage("system", "/help /new /tree /resume <id> /fork /mode build|plan /tool <name> /goal /exit");
           return;
+        case "/tool": {
+          const name = value.split(/\s+/)[1];
+          if (!name) {
+            appendMessage("system", "usage: /tool <name> (recent results: " + [...toolResults.keys()].join(", ") + ")");
+            return;
+          }
+          const r = toolResults.get(name);
+          if (!r) {
+            appendMessage("system", `no recent result for ${name}`);
+            return;
+          }
+          appendMessage("tool", `[${name}] ${r.ok ? "ok" : "error"}\n${(r.output ?? r.error ?? "").slice(0, 2000)}`);
+          return;
+        }
         case "/new":
           loop = null;
           sessionId = null; // new session unbinds the tape (cur-040 minor)
@@ -368,6 +426,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       tape.append({ type: "message", role: "user", content: value } as never);
       tape.close();
     }
+    // (assistant + tool events are persisted via tapeAppend in the hooks)
 
     // per-turn AbortController (cur-036: one-shot signal pollutes the loop)
     const turnCancel = new AbortController();
