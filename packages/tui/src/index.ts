@@ -147,6 +147,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
   const cyan = (s: string) => `\x1b[36m${s}\x1b[0m`;
   const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
+  // Base foreground: bright white — terminal profiles with a dark default
+  // foreground (some iTerm2 windows) made plain text black/invisible (Leo)
+  const brightWhite = (s: string) => `\x1b[97m${s}\x1b[0m`;
   const mdTheme: MarkdownTheme = {
     heading: (s) => green(s), link: cyan, linkUrl: dim, code: yellow,
     codeBlock: yellow, codeBlockBorder: dim, quote: gray, quoteBorder: dim,
@@ -166,7 +169,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const color = ROLE_COLOR[role] ?? ((s: string) => s);
     // role prefix: color only (no ** bold — that would double-wrap via
     // theme.bold around the ANSI codes, cur-040 minor)
-    messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme));
+    messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
     trimMessages();
     tui.requestRender(true);
   }
@@ -187,7 +190,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function appendStreamed(content: string): void {
     streamingBuffer += content;
     if (!streamingText) {
-      streamingText = new Markdown(`**assistant** ${streamingBuffer}`, 0, 0, mdTheme);
+      streamingText = new Markdown(`**assistant** ${streamingBuffer}`, 0, 0, mdTheme, { color: brightWhite });
       messagesBox.addChild(streamingText);
     } else {
       streamingText.setText(`**assistant** ${streamingBuffer}`);
