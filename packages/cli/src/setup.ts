@@ -185,13 +185,34 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
     }
   }
 
-  // 4. API key — masked (echoes *, never plaintext; Leo: pasting showed it)
-  process.stdout.write("\x1b[?25h\x1b[1;36m  API key: \x1b[0m");
+  // 4. API key — masked (echoes *, never plaintext; Leo: pasting showed it).
+  //    Offer importing Hermes' key on explicit choice (Leo has no own key;
+  //    import once -> permanent, no further prompts).
+  const hermesEnv = `${process.env.HOME}/.hermes/.env`;
+  let hermesKey: string | null = null;
+  try {
+    const raw = readFileSync(hermesEnv, "utf-8");
+    hermesKey = raw.match(/^DEEPSEEK_API_KEY=(.+)$/m)?.[1]?.trim() ?? null;
+  } catch {
+    hermesKey = null;
+  }
+  if (hermesKey) {
+    process.stdout.write(
+      "\x1b[?25h\x1b[1;36m  API key: \x1b[0m\x1b[2m(paste your own, or type \x1b[0m\x1b[1mh\x1b[0m\x1b[2m to import Hermes' key)\x1b[0m\n"
+    );
+  } else {
+    process.stdout.write("\x1b[?25h\x1b[1;36m  API key: \x1b[0m");
+  }
   let key = "";
   try {
     key = (await Promise.resolve(readSecretSync())).trim();
   } catch {
     return { ok: false, message: "setup aborted" };
+  }
+  if (key === "h" && hermesKey) {
+    key = hermesKey; // explicit user choice to share Hermes' credential
+  } else if (key === "h" && !hermesKey) {
+    return { ok: false, message: "no Hermes key found at ~/.hermes/.env" };
   }
   if (!key) {
     return { ok: false, message: "no API key provided — setup aborted" };
