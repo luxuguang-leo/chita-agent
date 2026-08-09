@@ -37,7 +37,9 @@ export const CONFIG_PATH = `${CONFIG_DIR}/config.json`;
 /** Whitelist: config.json only accepts these keys; unknown keys (e.g. apiKey) never enter memory */
 const CONFIG_KEYS = ["provider", "model", "permissionDefault", "maxTokensPerTask", "contextWindow"] as const;
 
-/** Load config; returns defaults if file is missing (never auto-creates; only init writes) */
+/** Load config; returns defaults if file is missing (never auto-creates; only init writes).
+ *  contextWindow defaults by model when not explicitly set: DeepSeek models
+ *  ship with a 1M-token context (Leo saw 295% against the 128K default). */
 export function loadConfig(): Config {
   try {
     const raw = readFileSync(CONFIG_PATH, "utf-8");
@@ -46,7 +48,13 @@ export function loadConfig(): Config {
     for (const k of CONFIG_KEYS) {
       if (k in parsed) picked[k] = parsed[k];
     }
-    return { ...DEFAULT_CONFIG, ...(picked as Partial<Config>) };
+    const cfg = { ...DEFAULT_CONFIG, ...(picked as Partial<Config>) };
+    // explicit config wins; otherwise infer from the model name
+    if (!("contextWindow" in parsed)) {
+      const model = (parsed.model as string) ?? cfg.model;
+      if (/^deepseek/.test(model)) cfg.contextWindow = 1_048_576; // DS 1M
+    }
+    return cfg;
   } catch {
     return DEFAULT_CONFIG;
   }

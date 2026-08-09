@@ -180,6 +180,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const judgeBudget = new JudgeBudget({});
   // last tool results per name (for /tool <name> full expansion, cur-042)
   const toolResults = new Map<string, { ok: boolean; output?: string; error?: string }>();
+  const lastToolCmd = new Map<string, string>(); // callId -> command (omp-style pairing)
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
@@ -292,14 +293,46 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           appendStreamed(msg.content);
         },
         onEvent: (ev) => {
+  /** Condensed tool summary for the message area (omp/hermes style): skip
+   *  decoration-only lines (===, ---, ***, ...), extract "=== TITLE ==="
+   *  markers, append line count when the output is long. Full output stays
+   *  available via /tool. (Leo: echo-title banners were pure noise.) */
+  function toolSummary(toolName: string, output: string): string {
+    const lines = output.trim().split("\n").filter((l) => l.trim());
+    if (lines.length === 0) return "done";
+    const DECOR = /^(=+|-+|~+|\*+|#+)\s*$/;
+    const TITLE = /^={2,}\s*(.+?)\s*={2,}$/;
+    let pick = "";
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line || DECOR.test(line)) continue;
+      const t = line.match(TITLE);
+      pick = t ? t[1].trim() : line;
+      break;
+    }
+    if (!pick) pick = "(no content)";
+    const suffix = lines.length > 3 ? ` · ${lines.length} 行` : "";
+    return pick.slice(0, 60) + suffix;
+  }
+
+          if (ev.type === "tool_call") {
+            // remember the command/args — shown next to the result (omp style)
+            const a = (ev.tool?.args ?? {}) as Record<string, unknown>;
+            const cmd = typeof a.command === "string" ? a.command
+              : typeof a.path === "string" ? a.path
+              : typeof a.pattern === "string" ? a.pattern
+              : "";
+            lastToolCmd.set(ev.callId ?? ev.tool?.name ?? "", cmd);
+            return;
+          }
           if (ev.type === "tool_result") {
             // Show real content, not bare "ok" (Leo: [bash] ok ×5 is noise).
-            // Success -> first line of output (or just the tool name if empty);
-            // failure -> error detail.
+            // Success -> condensed summary (decorations skipped, titles
+            // extracted, long output annotated); failure -> error detail.
             let detail: string;
             if (ev.ok) {
-              const out = (ev.output ?? "").trim().split("\n")[0] ?? "";
-              detail = out ? out.slice(0, 60) : "done";
+              const cmd = lastToolCmd.get(ev.callId ?? ev.toolName) ?? "";
+              detail = cmd ? `\`${cmd.slice(0, 50)}\`` : toolSummary(ev.toolName, ev.output ?? "");
             } else {
               detail = `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
             }
