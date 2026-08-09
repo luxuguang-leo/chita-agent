@@ -267,6 +267,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   /** The actual turn handler (slash or model task). */
   async function handleTurn(value: string): Promise<void> {
     // local slash commands (never to the model)
+    // also accept bare 'quit' / 'exit' (user intuition, cur-045)
+    if (value === "quit" || value === "exit") {
+      tui.stop();
+      process.exit(0);
+      return;
+    }
     if (value.startsWith("/")) {
       const cmd = value.split(/\s+/)[0];
       switch (cmd) {
@@ -481,24 +487,37 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   input.onSubmit = (value) => void onSubmit(value);
 
-  // Ctrl+C: cancel current turn (first), exit (second) — cur-033 #1
+  // Ctrl+C: cancel current turn (first), exit (second) — cur-033 #1.
+  // Handle BOTH paths: raw-mode byte (\u0003 via input listener) and the
+  // SIGINT signal (some terminals/PTYs deliver Ctrl+C as a signal even in
+  // raw mode; Leo: neither worked). Shared handler keeps semantics identical.
   let ctrlCPressed = false;
+  const handleCtrlC = () => {
+    if (running && cancelCurrent) {
+      cancelCurrent();
+      ctrlCPressed = false;
+      return;
+    }
+    if (ctrlCPressed) {
+      tui.stop();
+      process.exit(0);
+    }
+    ctrlCPressed = true;
+    setTimeout(() => (ctrlCPressed = false), 2000);
+  };
   tui.addInputListener((data) => {
     if (data === "\u0003") {
-      if (running && cancelCurrent) {
-        cancelCurrent();
-        ctrlCPressed = false;
-        return { consume: true };
-      }
-      if (ctrlCPressed) {
-        tui.stop();
-        process.exit(0);
-      }
-      ctrlCPressed = true;
-      setTimeout(() => (ctrlCPressed = false), 2000);
+      handleCtrlC();
+      return { consume: true };
+    }
+    if (data === "\u0004") {
+      // Ctrl+D (EOF): exit (terminal habit)
+      tui.stop();
+      process.exit(0);
       return { consume: true };
     }
   });
+  process.on("SIGINT", handleCtrlC);
 
   tui.start();
 }
