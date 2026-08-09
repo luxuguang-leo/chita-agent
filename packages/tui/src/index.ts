@@ -30,6 +30,8 @@ import { JudgeBudget } from "../../agent/src/judge.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
 import { scrubSecrets } from "../../agent/src/scrub.ts";
 import { loadConfig, apiKey } from "../../cli/src/config.ts";
+import { renderBanner } from "../../cli/src/banner.ts";
+import { VERSION } from "../../cli/src/index.ts";
 import {
   KeybindingsManager,
   setKeybindings,
@@ -747,6 +749,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   process.on("SIGINT", () => handleCtrlC());
 
   tui.start();
+
+  // Startup banner (Leo: missing in TUI) — logo + version/model/cwd
+  appendMessage("system", renderBanner({ version: VERSION, model: cfg.model, cwd: process.cwd() }));
 
   // Startup: default = continue the most recent session in this cwd
   // (Leo: opaque ids + manual resume were unfriendly). /new starts fresh.
