@@ -364,7 +364,9 @@ export class AgentLoop {
   private hasPendingToolCalls(): boolean {
     const last = this.messages[this.messages.length - 1];
     return last?.role === "tool";
-  }  private async runTool(
+  }
+
+  private async runTool(
     name: string,
     args: Record<string, unknown>,
     callId?: string

@@ -186,8 +186,16 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function endStreaming(): void {
     // persist the complete assistant message ONCE (cur-043 major: per-fragment
     // tape writes polluted sessions; write the full buffer at turn end)
-    if (streamingBuffer.trim()) {
-      tapeAppend({ type: "message", role: "assistant", content: streamingBuffer });
+    let content = streamingBuffer;
+    if (!content.trim() && loop) {
+      // tool-only turns: streamingBuffer stays empty — fall back to the last
+      // assistant message in the conversation (cur-044 nit)
+      const conv = loop.getConversation();
+      const lastAsst = [...conv].reverse().find((m) => m.role === "assistant");
+      content = lastAsst?.content ?? "";
+    }
+    if (content.trim()) {
+      tapeAppend({ type: "message", role: "assistant", content });
     }
     streamingText = null;
     streamingBuffer = "";
