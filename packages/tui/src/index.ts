@@ -161,15 +161,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   input.onSubmit = (value) => void onSubmit(value);
 
-  // terminal input: Ctrl+C cancel/exit handled via terminal.start callback
+  // tui.start() internally registers terminal input -> focused component
+  // (Input). Do NOT call terminal.start() again — it would overwrite the
+  // TUI's input handler and Input would never receive keystrokes.
   tui.start();
-  terminal.start(
-    (data) => {
-      if (data === "\u0003") {
-        // Ctrl+C: TUI library handles focus input; here we just note it.
-        appendMessage("system", "Ctrl+C (cancellation wiring lands in T2)");
-      }
-    },
-    () => tui.requestRender(true)
-  );
 }
