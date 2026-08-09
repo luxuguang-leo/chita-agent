@@ -13,7 +13,7 @@
 
 import { TuiMainScreen } from "../vendor/tui-main-screen.ts";
 import { ProcessTerminal } from "../vendor/terminal.ts";
-import { existsSync, readdirSync, statSync, appendFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { ScrollView } from "../vendor/components/scroll-view.ts";
 import { Text } from "../vendor/components/text.ts";
@@ -638,42 +638,34 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // SIGINT signal (some terminals/PTYs deliver Ctrl+C as a signal even in
   // raw mode; Leo: neither worked). Shared handler keeps semantics identical.
   let ctrlCPressed = false;
-  const ctrlLog = (msg: string) => {
-    try {
-      appendFileSync("/tmp/chita-ctrl.log", `${new Date().toISOString()} ${msg} running=${running} ctrl=${ctrlCPressed}\n`);
-    } catch {
-      // best-effort debug log
-    }
-  };
   const handleCtrlC = () => {
-    ctrlLog("handleCtrlC called");
     // Running: first press cancels the turn AND arms exit — the next press
     // (within 2s) exits unconditionally. Previously ctrlCPressed was reset
     // here, so a second Ctrl+C while still running re-cancelled forever
     // (Leo: 'Ctrl+C 无法退出' during a turn).
     if (running && cancelCurrent && !ctrlCPressed) {
-      ctrlLog("-> cancel turn + arm exit");
       cancelCurrent();
       ctrlCPressed = true;
       setTimeout(() => (ctrlCPressed = false), 2000);
       return;
     }
     // Idle single press, or any second press: exit.
-    ctrlLog("-> exit");
     tui.stop();
     process.exit(0);
   };
+  // Ctrl+C arrives as \u0003 (classic raw mode) OR as a kitty keyboard
+  // protocol sequence from iTerm2/kitty: ESC[99;5u (key 99='c', modifier
+  // 5/6 = Ctrl). Real-terminal diagnosis (Leo): iTerm2 sent \x1b[99;5u,
+  // never \u0003, so byte-only matching never fired. SIGINT also never
+  // fires (raw mode disables ISIG). Match both encodings.
+  const KITTY_CTRL_C = /^\x1b\[99[:;]\d*[:;]?[456]/; // 99 + mod bit 4 (Ctrl)
   tui.addInputListener((data) => {
-    if (data === "\u0003") {
-      ctrlLog("byte \\u0003 received");
+    if (data === "\u0003" || KITTY_CTRL_C.test(data)) {
       handleCtrlC();
       return { consume: true };
     }
   });
-  process.on("SIGINT", () => {
-    ctrlLog("SIGINT signal received");
-    handleCtrlC();
-  });
+  process.on("SIGINT", () => handleCtrlC());
 
   tui.start();
 
