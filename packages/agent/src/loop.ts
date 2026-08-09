@@ -90,6 +90,8 @@ export interface LoopOptions {
   /** build: full execution (default). plan: read-only analysis —
    *  write tools forbidden, bash requires explicit approval (opencode build/plan). */
   mode?: LoopMode;
+  /** Abort signal: cancels the current turn (Ctrl+C in TUI). */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_MAX_ITERATIONS = 50;
@@ -215,7 +217,7 @@ export class AgentLoop {
       let pendingAssistant: ChatMessage | null = null;
       while (!turnDone) {
         try {
-          for await (const ev of this.opts.provider.chat(this.messages, { signal: undefined, tools: chatTools })) {
+          for await (const ev of this.opts.provider.chat(this.messages, { signal: this.opts.signal, tools: chatTools })) {
             if (ev.kind === "message" && ev.message) {
               // Streaming fragments: show via hook, accumulate into ONE
               // conversation message (dedup — turn-end message carries full text)
@@ -272,6 +274,12 @@ export class AgentLoop {
           }
           turnDone = true;
         } catch (e) {
+          // Abort (Ctrl+C in TUI): cancel the turn, propagate as CANCELLED
+          if (e instanceof Error && e.name === "AbortError") {
+            this.state = "CANCELLED";
+            this.opts.hooks?.onSessionEnd?.(this.state);
+            return { state: this.state };
+          }
           // Classify: only context overflow triggers compact+retry
           const msg = e instanceof Error ? e.message : String(e);
           const classified = classifyError(undefined, msg);

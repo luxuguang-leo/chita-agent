@@ -126,3 +126,23 @@ test("run resets, continue doesn't (dual-entry drift guard, cur-032)", async () 
   expect(afterRun.length).toBe(1); // only the fresh task
   expect(afterRun[0].content).toBe("fresh");
 });
+
+test("continue: abort signal cancels the turn (CANCELLED)", async () => {
+  // provider yields forever but checks the abort signal (like fetch does);
+  // abort after first event -> loop sees AbortError -> CANCELLED
+  const abort = new AbortController();
+  const endless: Provider = {
+    async *chat(_m: ChatMessage[], opts) {
+      while (true) {
+        if (opts?.signal?.aborted) throw new DOMException("aborted", "AbortError");
+        yield { kind: "message", message: { role: "assistant", content: "tick" } };
+        await new Promise((r) => setTimeout(r, 1));
+      }
+    },
+  };
+  const loop = new AgentLoop({ cwd: "/tmp", provider: endless, signal: abort.signal });
+  const p = loop.continue("task");
+  setTimeout(() => abort.abort(), 20);
+  const result = await p;
+  expect(result.state).toBe("CANCELLED");
+});

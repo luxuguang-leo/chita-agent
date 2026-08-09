@@ -1,12 +1,14 @@
 /**
- * chita TUI (T1 skeleton, TUI design v2)
+ * chita TUI (T1, cur-033 gaps addressed)
  *
  * Three-region layout: message area (ScrollView) + input line (Input) +
- * status bar. Multi-turn via AgentLoop.continue() (T1 前置). Slash commands
- * handled locally — never fed to the model (design §5).
+ * status bar. Multi-turn via AgentLoop.continue(). Slash commands local.
  *
- * Host-only: all logic lives in AgentLoop/hooks; this file renders + handles
- * input (design §1: host does not pollute core).
+ * cur-033 fixes:
+ * - assistant streaming rendered via onAssistantMessage hook
+ * - Ctrl+C cancels current turn (AbortController via loop signal)
+ * - onSubmit re-entrancy lock (no stacked runs on rapid Enter)
+ * - /mode rebuilds the loop with the new mode
  */
 
 import { TuiMainScreen } from "../vendor/tui-main-screen.ts";
@@ -14,11 +16,10 @@ import { ProcessTerminal } from "../vendor/terminal.ts";
 import { ScrollView } from "../vendor/components/scroll-view.ts";
 import { Input } from "../vendor/components/input.ts";
 import { Text } from "../vendor/components/text.ts";
-import { Box } from "../vendor/components/box.ts";
 import { VStack } from "../vendor/components/v-stack.ts";
 import { HStack } from "../vendor/components/h-stack.ts";
-import { Container } from "../vendor/tui.ts";
-import { AgentLoop, type ChatMessage } from "../../agent/src/loop.ts";
+import { Box } from "../vendor/components/box.ts";
+import { AgentLoop } from "../../agent/src/loop.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
 import { scrubSecrets } from "../../agent/src/scrub.ts";
 import { loadConfig, apiKey } from "../../cli/src/config.ts";
@@ -26,14 +27,6 @@ import { loadConfig, apiKey } from "../../cli/src/config.ts";
 export interface TuiOptions {
   judge?: boolean;
 }
-
-interface SessionState {
-  loop: AgentLoop;
-  messages: ChatMessage[];
-}
-
-/** Local slash commands — never reach the model (design §5). */
-const LOCAL_COMMANDS = ["/help", "/new", "/exit", "/mode", "/goal"];
 
 export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const cfg = loadConfig();
@@ -50,21 +43,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const terminal = new ProcessTerminal();
   const tui = new TuiMainScreen(terminal);
 
-  // 1) message area: ScrollView wraps a message container
   const messagesBox = new Box();
   const messageScroll = new ScrollView(messagesBox, { follow: "end" });
-
-  // 2) input line
   const input = new Input();
+  const statusText = new Text("session: new | mode: build | model: " + cfg.model + " | tokens: 0", 0, 0);
 
-  // 3) status bar
-  const statusText = new Text(
-    `session: new | mode: build | model: ${cfg.model} | tokens: 0`,
-    0,
-    0
-  );
-
-  // root layout: message area (grow) + input + status
   const root = new VStack([
     { component: messageScroll, grow: 1 },
     { component: input },
@@ -73,10 +56,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   tui.addChild(root);
   tui.setFocus(input);
 
-  // --- session ---
-  let session: SessionState | null = null;
+  // --- session state ---
+  let loop: AgentLoop | null = null;
   let mode: "build" | "plan" = "build";
   let tokensUsed = 0;
+  let running = false; // re-entrancy lock (cur-033 #6)
+  let cancelCurrent: (() => void) | null = null;
 
   function appendMessage(role: string, content: string): void {
     messagesBox.addChild(new Text(`[${role}] ${content}`, 0, 0));
@@ -85,37 +70,68 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   function setStatus(suffix = ""): void {
     statusText.setText(
-      `session: ${session ? "active" : "new"} | mode: ${mode} | model: ${cfg.model} | tokens: ${tokensUsed}${suffix}`
+      `session: ${loop ? "active" : "new"} | mode: ${mode} | model: ${cfg.model} | tokens: ${tokensUsed}${suffix}`
     );
     tui.requestRender(true);
   }
 
+  function buildLoop(): AgentLoop {
+    const cancel = new AbortController();
+    cancelCurrent = () => cancel.abort();
+    return new AgentLoop({
+      cwd: process.cwd(),
+      provider: makeProvider(),
+      mode,
+      autoApproveAsk: true,
+      signal: cancel.signal, // Ctrl+C cancels the turn (cur-033 #1)
+      hooks: {
+        beforeToolCall: async () => true,
+        afterToolCall: (_n, result) => {
+          if (result.output) {
+            const scrubbed = scrubSecrets(result.output);
+            return { ok: result.ok, output: scrubbed.text, redacted: scrubbed.redacted };
+          }
+        },
+        // streaming assistant text rendered live (cur-033 #3)
+        onAssistantMessage: (msg) => appendMessage("assistant", msg.content),
+        onEvent: (ev) => {
+          if (ev.type === "tool_result") {
+            appendMessage("tool", `[${ev.toolName}] ${ev.ok ? "ok" : "error"}`);
+          }
+        },
+      },
+    });
+  }
+
   async function onSubmit(raw: string): Promise<void> {
     const value = raw.trim();
-    if (!value) return;
+    if (!value || running) return; // re-entrancy lock
 
-    // local slash commands (design §5 — never to the model)
+    // local slash commands (never to the model)
     if (value.startsWith("/")) {
       const cmd = value.split(/\s+/)[0];
       switch (cmd) {
         case "/help":
-          appendMessage("system", LOCAL_COMMANDS.join("  "));
+          appendMessage("system", "/help /new /mode build|plan /goal /exit");
           return;
         case "/new":
-          session = null;
+          loop = null;
           appendMessage("system", "new session");
+          setStatus();
           return;
         case "/exit":
           tui.stop();
           process.exit(0);
           return;
-        case "/mode":
+        case "/mode": {
           mode = value.includes("plan") ? "plan" : "build";
+          loop = buildLoop(); // rebuild with new mode (cur-033 #5)
+          appendMessage("system", `mode -> ${mode} (session reset)`);
           setStatus();
-          appendMessage("system", `mode -> ${mode}`);
           return;
+        }
         case "/goal":
-          appendMessage("system", "/goal: independent verification (after a task)");
+          appendMessage("system", "/goal: independent verification (full wiring in T2)");
           return;
         default:
           appendMessage("system", `unknown: ${cmd} (try /help)`);
@@ -123,46 +139,49 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       }
     }
 
-    // new session on first turn
-    if (!session) {
-      const loop = new AgentLoop({
-        cwd: process.cwd(),
-        provider: makeProvider(),
-        mode,
-        autoApproveAsk: true,
-        hooks: {
-          beforeToolCall: async () => true,
-          afterToolCall: (_n, result) => {
-            if (result.output) {
-              const scrubbed = scrubSecrets(result.output);
-              return { ok: result.ok, output: scrubbed.text, redacted: scrubbed.redacted };
-            }
-          },
-          onEvent: (ev) => {
-            if (ev.type === "tool_result") {
-              const outcome = ev.ok ? "ok" : `error: ${ev.error ?? ""}`;
-              appendMessage("tool", `[${ev.toolName}] ${outcome}`);
-            }
-          },
-        },
-      });
-      session = { loop, messages: loop.getConversation() };
-    }
+    if (!loop) loop = buildLoop();
 
+    running = true;
     appendMessage("user", value);
     setStatus(" | running...");
 
-    const result = await session.loop.continue(value); // multi-turn via continue (T1 前置)
-    if (result.summary) {
-      appendMessage("assistant", result.summary);
+    try {
+      const result = await loop.continue(value); // multi-turn
+      if (result.state === "CANCELLED") {
+        appendMessage("system", "cancelled");
+      } else if (result.summary) {
+        appendMessage("assistant", result.summary);
+      }
+    } catch (e) {
+      const msg = e instanceof Error && e.name === "AbortError" ? "cancelled" : String(e);
+      appendMessage("system", msg);
+    } finally {
+      running = false;
+      cancelCurrent = null;
+      setStatus();
     }
-    setStatus();
   }
 
   input.onSubmit = (value) => void onSubmit(value);
 
-  // tui.start() internally registers terminal input -> focused component
-  // (Input). Do NOT call terminal.start() again — it would overwrite the
-  // TUI's input handler and Input would never receive keystrokes.
+  // Ctrl+C: cancel current turn (first), exit (second) — cur-033 #1
+  let ctrlCPressed = false;
+  tui.addInputListener((data) => {
+    if (data === "\u0003") {
+      if (running && cancelCurrent) {
+        cancelCurrent();
+        ctrlCPressed = false;
+        return { consume: true };
+      }
+      if (ctrlCPressed) {
+        tui.stop();
+        process.exit(0);
+      }
+      ctrlCPressed = true;
+      setTimeout(() => (ctrlCPressed = false), 2000);
+      return { consume: true };
+    }
+  });
+
   tui.start();
 }
