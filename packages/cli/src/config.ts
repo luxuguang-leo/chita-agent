@@ -7,6 +7,7 @@
  */
 
 import { mkdirSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface Config {
   /** Default provider (OpenAI-compatible first, v2.1 §2.1) */
@@ -48,9 +49,19 @@ export function loadConfig(): Config {
   }
 }
 
-/** API key comes only from environment (never config, never conversation) */
+/** API key comes only from environment or ~/.chita/.env (never config.json,
+ *  never conversation). Precedence: CHITA_API_KEY env > ~/.chita/.env. */
 export function apiKey(): string | null {
-  return process.env.CHITA_API_KEY ?? null;
+  if (process.env.CHITA_API_KEY) return process.env.CHITA_API_KEY;
+  // chita's own key file (~/.chita/.env): "CHITA_API_KEY=sk-..."
+  try {
+    const raw = readFileSync(join(CONFIG_DIR, ".env"), "utf-8");
+    const m = raw.match(/^CHITA_API_KEY=(.+)$/m);
+    if (m) return m[1].trim();
+  } catch {
+    // no .env — caller decides (missing key)
+  }
+  return null;
 }
 
 /** chita init: create ~/.chita/ + config.json; skip if already present */

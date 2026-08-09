@@ -231,8 +231,16 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         },
         onEvent: (ev) => {
           if (ev.type === "tool_result") {
-            // folded summary; keep error detail for debugging (cur-040 minor)
-            const detail = ev.ok ? "ok" : `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
+            // Show real content, not bare "ok" (Leo: [bash] ok ×5 is noise).
+            // Success -> first line of output (or just the tool name if empty);
+            // failure -> error detail.
+            let detail: string;
+            if (ev.ok) {
+              const out = (ev.output ?? "").trim().split("\n")[0] ?? "";
+              detail = out ? out.slice(0, 60) : "done";
+            } else {
+              detail = `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
+            }
             appendMessage("tool", `[${ev.toolName}] ${detail}`);
             // remember full result for /tool expansion (cur-042)
             toolResults.set(ev.toolName, { ok: ev.ok, output: ev.output, error: ev.error });
@@ -508,12 +516,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   tui.addInputListener((data) => {
     if (data === "\u0003") {
       handleCtrlC();
-      return { consume: true };
-    }
-    if (data === "\u0004") {
-      // Ctrl+D (EOF): exit (terminal habit)
-      tui.stop();
-      process.exit(0);
       return { consume: true };
     }
   });
