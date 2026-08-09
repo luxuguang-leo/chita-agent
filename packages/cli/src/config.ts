@@ -37,9 +37,39 @@ export const CONFIG_PATH = `${CONFIG_DIR}/config.json`;
 /** Whitelist: config.json only accepts these keys; unknown keys (e.g. apiKey) never enter memory */
 const CONFIG_KEYS = ["provider", "model", "permissionDefault", "maxTokensPerTask", "contextWindow"] as const;
 
+/** Known model context windows (tokens). Prefix-matched, most specific
+ *  first — mirrors how litellm/openrouter resolve contexts: DS 1M, Kimi
+ *  variant sizes, Claude 200K, GPT-4.1 1M, etc. (Leo: 1M is DS-specific,
+ *  not every model.) */
+const MODEL_CONTEXTS: Array<[RegExp, number]> = [
+  [/^deepseek/, 1_048_576], // DS 1M
+  [/^moonshot-v1-(128k|32k)/, 131_072],
+  [/^moonshot/, 131_072],
+  [/^glm-4/, 131_072],
+  [/^claude/, 200_000],
+  [/^gpt-4\.1/, 1_048_576],
+  [/^gpt-4/, 131_072],
+  [/^gpt-3\.5/, 16_385],
+  [/^llama3/, 131_072],
+  [/^qwen/, 131_072],
+];
+
+/** Infer a model's context window from its name; -8k/-32k/-128k/-1m suffixes
+ *  win when present; falls back to DEFAULT. */
+export function inferContextWindow(model: string): number {
+  const m = model.match(/-(\d+)k$/i) ?? model.match(/-(\d+)m$/i);
+  if (m) {
+    const n = Number(m[1]);
+    return /m$/i.test(m[0]) ? n * 1_048_576 : n * 1024;
+  }
+  for (const [re, ctx] of MODEL_CONTEXTS) {
+    if (re.test(model)) return ctx;
+  }
+  return DEFAULT_CONFIG.contextWindow;
+}
+
 /** Load config; returns defaults if file is missing (never auto-creates; only init writes).
- *  contextWindow defaults by model when not explicitly set: DeepSeek models
- *  ship with a 1M-token context (Leo saw 295% against the 128K default). */
+ *  contextWindow defaults by model when not explicitly set. */
 export function loadConfig(): Config {
   try {
     const raw = readFileSync(CONFIG_PATH, "utf-8");
@@ -51,8 +81,7 @@ export function loadConfig(): Config {
     const cfg = { ...DEFAULT_CONFIG, ...(picked as Partial<Config>) };
     // explicit config wins; otherwise infer from the model name
     if (!("contextWindow" in parsed)) {
-      const model = (parsed.model as string) ?? cfg.model;
-      if (/^deepseek/.test(model)) cfg.contextWindow = 1_048_576; // DS 1M
+      cfg.contextWindow = inferContextWindow((parsed.model as string) ?? cfg.model);
     }
     return cfg;
   } catch {

@@ -145,7 +145,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     { name: "exit", description: "leave TUI" },
   ];
   input.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, process.cwd()));
-  const statusText = new Text("session: new | mode: build | model: " + cfg.model + " | ↑0 ↓0 | 0/131072 (0%)", 0, 0);
+  const statusText = new Text(
+    "session: new | mode: build | model: " + cfg.model + ` | ↑0 ↓0 | 0/${cfg.contextWindow ?? 131_072} (0%)`,
+    0,
+    0
+  );
 
   const root = new VStack([
     { component: messageScroll, grow: 1 },
