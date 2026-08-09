@@ -147,7 +147,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   ];
   input.setAutocompleteProvider(new CombinedAutocompleteProvider(slashCommands, process.cwd()));
   const statusText = new Text(
-    "session: new | mode: build | model: " + cfg.model + ` | ↑0 ↓0 | 会话 0/${cfg.contextWindow ?? 131_072} (0%)`,
+    "session: new | mode: build | model: " + cfg.model + ` | ↑0 ↓0 | ctx 0/${cfg.contextWindow ?? 131_072} (0%)`,
     0,
     0
   );
@@ -287,7 +287,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const pct = ctx > 0 ? Math.round((cur / ctx) * 100) : 0;
     statusText.setText(
       `session: ${sid} | mode: ${mode} | model: ${cfg.model} | ` +
-        `↑${tokensUsed.input} ↓${tokensUsed.output} | 会话 ${cur}/${ctx} (${pct}%)${suffix}`
+        `↑${tokensUsed.input} ↓${tokensUsed.output} | ctx ${cur}/${ctx} (${pct}%)${suffix}`
     );
     tui.requestRender(true);
   }
@@ -331,7 +331,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       break;
     }
     if (!pick) pick = "(no content)";
-    const suffix = lines.length > 3 ? ` · ${lines.length} 行` : "";
+    const suffix = lines.length > 3 ? ` · ${lines.length} lines` : "";
     return pick.slice(0, 60) + suffix;
   }
 
@@ -675,8 +675,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   if (recent) {
     const when = recent.age ? ` (${recent.age})` : "";
     if (resumeSession(recent.id)) {
-      appendMessage("system", `已恢复上次会话 ${recent.id}${when} — 内容: "${recent.first}"`);
-      appendMessage("system", `/new 开新会话，或直接继续输入`);
+      appendMessage("system", `resumed last session ${recent.id}${when} — topic: "${recent.first}"`);
+      appendMessage("system", `/new for a fresh session, or keep typing`);
     }
   }
 }
