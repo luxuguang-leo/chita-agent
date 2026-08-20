@@ -68,6 +68,8 @@ export async function runSubagent(
     // subagents never auto-approve writes unless scope says inherit
     autoApproveAsk: task.permissionScope === "inherit",
     maxIterations: task.maxIterations ?? 15,
+    // no maxTokens: fresh context + maxIterations bound means the loop's 1M
+    // spend-fuse fallback is never the binding limit here (cur-057)
     tools: opts.tools,
     hooks: opts.hooks,
   });

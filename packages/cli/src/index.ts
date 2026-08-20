@@ -62,6 +62,7 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
     cwd: process.cwd(),
     provider,
     mode: opts.plan ? "plan" : "build",
+    maxTokens: cfg.contextWindow, // spend fuse ≈ context window, not remaining ctx (cur-057)
     autoApproveAsk: true, // --print dev mode (v2.1 §2.3)
     hooks: {
       beforeToolCall: async () => true,

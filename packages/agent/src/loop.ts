@@ -83,6 +83,11 @@ export interface LoopOptions {
   tools?: ToolRegistry;
   hooks?: LoopHooks;
   maxIterations?: number;
+  /** Per-run token spend fuse (NOT the remaining context window): caps the
+   *  cumulative prompt+completion tokens billed across this run()/continue().
+   *  Production callers pass the model's context window as a model-scaled
+   *  ceiling; real context overflow is still handled by compact/overflow
+   *  recovery. Falls back to DEFAULT_MAX_TOKENS when unset (cur-057). */
   maxTokens?: number;
   /** M1 --print dev mode: auto-approve ask-level tools (write/bash) without a prompt.
    *  (v2.1 §2.3; WAITING_USER interactive approval is M1.5+) */
@@ -95,6 +100,9 @@ export interface LoopOptions {
 }
 
 const DEFAULT_MAX_ITERATIONS = 50;
+/** Fallback ONLY for callers that don't pass maxTokens (tests/library use).
+ *  Production callers (CLI/TUI) pass the model's context window — the budget
+ *  must adapt to the model, not a hardcoded 1M (cur-057). */
 const DEFAULT_MAX_TOKENS = 1_000_000;
 
 export class AgentLoop {
@@ -198,8 +206,16 @@ export class AgentLoop {
   private async runLoop(): Promise<{ state: LoopState; summary?: string; error?: string }> {
     const maxIter = this.opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
     const maxTokens = this.opts.maxTokens ?? DEFAULT_MAX_TOKENS;
+    // Per-run budget deltas (cur-056): tokensUsed/iterations are CUMULATIVE
+    // across turns and are RESTORED from the tape on resume (restoreTokens).
+    // A resumed session whose cumulative total already exceeds maxTokens
+    // (the stuck session: input 998K > 1M budget) would otherwise fail the
+    // guard before the first provider call — the turn returns ERROR with no
+    // reply and the TUI looks stuck. Guard on THIS run's consumption instead.
+    const runStartIterations = this.iterations;
+    const runStartTokens = this.tokensUsed;
 
-    while (this.iterations < maxIter && this.tokensUsed < maxTokens) {
+    while ((this.iterations - runStartIterations) < maxIter && (this.tokensUsed - runStartTokens) < maxTokens) {
       // Drain steering messages first
       if (this.steers.length > 0) {
         const steer = this.steers.shift()!;
@@ -383,10 +399,20 @@ export class AgentLoop {
       }
     }
 
-    this.state = this.tokensUsed >= maxTokens ? "ERROR" : "DONE";
-    if (this.iterations >= maxIter) this.state = "ERROR";
+    // Reached only when the per-run budget is exhausted (gotDone returns from
+    // inside the loop). Surface a concrete message — the old bare ERROR left
+    // the TUI showing nothing ("no reply"), cur-056 nit.
+    const runIterations = this.iterations - runStartIterations;
+    const runTokens = this.tokensUsed - runStartTokens;
+    this.state = "ERROR";
     this.opts.hooks?.onSessionEnd?.(this.state);
-    return { state: this.state };
+    return {
+      state: this.state,
+      error:
+        runTokens >= maxTokens
+          ? `per-run token budget exceeded (${runTokens}/${maxTokens})`
+          : `per-run iteration budget exceeded (${runIterations}/${maxIter})`,
+    };
   }
 
   private hasPendingToolCalls(): boolean {

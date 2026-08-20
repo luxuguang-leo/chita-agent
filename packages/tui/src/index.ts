@@ -198,6 +198,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
   let streamingBuffer = "";
+  /** True once the provider emitted any message THIS turn (cur-056): guards
+   *  endStreaming from re-appending a stale assistant message + unchanged
+   *  usage when the loop returns without ever calling the provider (e.g. a
+   *  resumed session dead-locked on the cumulative token budget). */
+  let streamedThisTurn = false;
 
   // ANSI colors for role/block styling (T3)
   const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
@@ -276,6 +281,15 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function endStreaming(): void {
     // persist the complete assistant message ONCE (cur-043 major: per-fragment
     // tape writes polluted sessions; write the full buffer at turn end)
+    // cur-056: if the provider never ran this turn (deadlock/error before the
+    // first streamed token), there is nothing new to persist — writing the
+    // stale last-assistant message + unchanged usage here is what polluted
+    // the stuck session's tape with repeated "让我再看几个关键 references…".
+    if (!streamedThisTurn) {
+      streamingText = null;
+      streamingBuffer = "";
+      return;
+    }
     let content = streamingBuffer;
     if (!content.trim() && loop) {
       // tool-only turns: streamingBuffer stays empty — fall back to the last
@@ -329,6 +343,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       cwd: process.cwd(),
       provider: makeProvider(),
       mode,
+      maxTokens: cfg.contextWindow, // spend fuse ≈ context window, not remaining ctx (cur-057)
       autoApproveAsk: true,
       hooks: {
         beforeToolCall: async () => true,
@@ -342,6 +357,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         // per-fragment (cur-043 major: fragments would pollute the tape) —
         // written once at endStreaming from the buffer
         onAssistantMessage: (msg) => {
+          streamedThisTurn = true;
           appendStreamed(msg.content);
         },
         onEvent: (ev) => {
@@ -643,6 +659,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     running = true;
     appendMessage("user", value);
     setStatus(" | running...");
+    streamedThisTurn = false; // reset per-turn (cur-056)
+    streamingBuffer = ""; // defensive: never carry over from a prior turn
 
     try {
       const result = await loop.continue(value); // multi-turn
