@@ -1,13 +1,14 @@
 /**
  * Debug: run e08 through the real DeepSeek provider and inspect the loop.
  */
-import { AgentLoop } from "/Users/luxuguang/Projects/chita-agent/packages/agent/src/loop.ts";
-import { OpenAICompatibleProvider } from "/Users/luxuguang/Projects/chita-agent/packages/ai/src/index.ts";
+import { AgentLoop } from "../packages/agent/src/loop.ts";
+import { OpenAICompatibleProvider } from "../packages/ai/src/index.ts";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-const cwd = "/Users/luxuguang/Projects/chita-agent/evals/cases/e08-verify-output";
+const cwd = join(import.meta.dir, "cases/e08-verify-output");
 const instruction = readFileSync(
-  "/Users/luxuguang/Projects/chita-agent/evals/cases/e08-verify-output/instruction.md",
+  join(cwd, "instruction.md"),
   "utf-8"
 );
 
