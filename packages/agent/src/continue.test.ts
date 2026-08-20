@@ -107,6 +107,24 @@ test("seedConversation: rejects orphan tool message (cur-032)", () => {
   ).toThrow(/orphan tool/);
 });
 
+test("resume: restored cumulative tokens > maxTokens still runs (cur-056)", async () => {
+  // A resumed session restores CUMULATIVE billing totals via restoreTokens.
+  // If those totals already exceed the per-run maxTokens budget, the loop
+  // must still run (guard on the per-run delta, not the lifetime total) —
+  // otherwise the turn returns ERROR before any provider call and the TUI
+  // looks stuck (no reply at all).
+  const loop = new AgentLoop({
+    cwd: "/tmp",
+    provider: new FakeProvider([[{ kind: "done", summary: "reply after resume" }]]),
+    maxTokens: 100,
+  });
+  loop.restoreTokens({ total: 500_000, input: 480_000, output: 20_000 });
+  loop.seedConversation([{ role: "user", content: "hi" }]);
+  const r = await loop.continue("你是什么模型");
+  expect(r.state).toBe("DONE");
+  expect(r.summary).toBe("reply after resume");
+});
+
 test("run resets, continue doesn't (dual-entry drift guard, cur-032)", async () => {
   const loop = new AgentLoop({
     cwd: "/tmp",

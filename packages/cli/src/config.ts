@@ -16,9 +16,11 @@ export interface Config {
   model: string;
   /** Default tool permission: allow | ask | deny (v2.1 §2.3) */
   permissionDefault: "allow" | "ask" | "deny";
-  /** Hard per-task token budget cap (v2.1 §2.2, <1M) */
-  maxTokensPerTask: number;
-  /** Model context window in tokens (status bar shows usage %; e.g. DS 1M = 1_048_576) */
+  /** Model context window in tokens. Doubles as the agent loop's per-run
+   *  token budget (cur-057: the budget must adapt to the model, not be a
+   *  hardcoded 1M). Status bar shows usage % against it. Inferred from the
+   *  model name when not set explicitly (DeepSeek 1M, Claude 200K, GLM/
+   *  Moonshot/Qwen 128K). */
   contextWindow: number;
 }
 
@@ -26,7 +28,6 @@ export const DEFAULT_CONFIG: Config = {
   provider: "openai-compatible",
   model: "deepseek-chat",
   permissionDefault: "ask",
-  maxTokensPerTask: 1_000_000,
   contextWindow: 131_072,
 };
 
@@ -35,7 +36,7 @@ export const CONFIG_DIR = `${process.env.HOME}/.chita`;
 export const CONFIG_PATH = `${CONFIG_DIR}/config.json`;
 
 /** Whitelist: config.json only accepts these keys; unknown keys (e.g. apiKey) never enter memory */
-const CONFIG_KEYS = ["provider", "model", "permissionDefault", "maxTokensPerTask", "contextWindow"] as const;
+const CONFIG_KEYS = ["provider", "model", "permissionDefault", "contextWindow"] as const;
 
 /** Known model context windows (tokens). Prefix-matched, most specific
  *  first — mirrors how litellm/openrouter resolve contexts: DS 1M, Kimi

@@ -97,6 +97,7 @@ export async function runEvals(opts: RunOptions): Promise<EvalResult[]> {
           cwd: tmp,
           provider: opts.provider,
           maxIterations: opts.maxIterations ?? 20,
+          // no maxTokens: fresh fixture context + maxIterations bound (1M fallback not binding, cur-057)
           autoApproveAsk: true, // eval runs are sandboxed fixtures — allow write/bash
           hooks: opts.hooks,
         });

@@ -67,6 +67,7 @@ export async function runWorkflow(
         tools: opts.tools,
         hooks: opts.hooks,
         maxIterations: opts.maxIterations ?? 20,
+        // no maxTokens: fresh context + maxIterations bound (1M fallback not binding, cur-057)
         autoApproveAsk: true, // workflows run pipelines — allow write
       });
       lastOutcome = await loop.run(stage.task);
