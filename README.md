@@ -40,19 +40,6 @@ chita --version
 
 ## Architecture
 
-```
-UI layer       cli (--print) / tui (pi-tui)
-Core           agent loop (state machine + done hard gate)
-               ├─ tool registry (permission tiers + beforeToolCall hook)
-               ├─ context-manager (compact / truncate / overflow)
-               ├─ hook system (before/after tool call, session_end)
-               ├─ subagent (TaskResult evidence contract)
-               └─ judge (/goal independent anti-early-stop)
-Capabilities   ai (OpenAI-compatible provider) · mcp · skills (prompt assembly)
-Storage        session-backends (tape-first JSONL + SQLite index)
-               memory (4 layers: MEMORY / checkpoint / notes / tasks)
-```
-
 ![chita architecture](docs/chita-architecture.svg)
 
 *[Open interactive diagram (dark/light theme, PNG/SVG export)](docs/chita-architecture.html)*
