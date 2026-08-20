@@ -1,8 +1,8 @@
 {
   "__meta": {
     "sessionId": "20260809-001",
-    "cwd": "/Users/luxuguang/Projects/sample-repo",
-    "repoRoot": "/Users/luxuguang/Projects/sample-repo",
+    "cwd": "/Users/alice/Projects/sample-repo",
+    "repoRoot": "/Users/alice/Projects/sample-repo",
     "model": "deepseek-chat",
     "provider": "openai-compatible",
     "createdAt": "2026-08-09T01:00:00+08:00",
