@@ -53,7 +53,9 @@ Storage        session-backends (tape-first JSONL + SQLite index)
                memory (4 layers: MEMORY / checkpoint / notes / tasks)
 ```
 
-Rendered diagram: [`docs/chita-architecture.html`](docs/chita-architecture.html) (self-contained, dark/light theme, PNG/SVG export).
+![chita architecture](docs/chita-architecture.svg)
+
+*[Open interactive diagram (dark/light theme, PNG/SVG export)](docs/chita-architecture.html)*
 
 ## Evaluation
 

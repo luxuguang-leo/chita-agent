@@ -1,0 +1,203 @@
+<svg viewBox="0 0 1420 664" role="img" aria-label="chita Architecture — A local terminal coding agent — single binary, eval-driven, audit-friendly (architecture diagram)" width="1420" height="664" xmlns="http://www.w3.org/2000/svg"><style>svg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace; }
+:root, [data-theme="dark"] { --bg: #020617; --grid: #1e293b; --text: #ffffff; --text-muted: #94a3b8; --text-dim: #475569; --text-faint: #7d8da1; --panel: rgba(15, 23, 42, 0.5); --panel-border: #1e293b; --lane-fill: rgba(15, 23, 42, 0.22); --lane-stroke: #334155; --arrow: #64748b; --arrow-emphasis: #34d399; --mask: #0f172a; --frontend-fill: rgba(8, 51, 68, 0.4); --frontend-stroke: #22d3ee; --backend-fill: rgba(6, 78, 59, 0.4); --backend-stroke: #34d399; --database-fill: rgba(76, 29, 149, 0.4); --database-stroke: #a78bfa; --cloud-fill: rgba(120, 53, 15, 0.3); --cloud-stroke: #fbbf24; --security-fill: rgba(136, 19, 55, 0.4); --security-stroke: #fb7185; --messagebus-fill: rgba(251, 146, 60, 0.3); --messagebus-stroke: #fb923c; --external-fill: rgba(30, 41, 59, 0.5); --external-stroke: #94a3b8; --toolbar-bg: rgba(15, 23, 42, 0.8); --toolbar-border: #334155; --toolbar-text: #e2e8f0; --toolbar-hover: rgba(15, 23, 42, 0.95); --toolbar-menu-bg: #0f172a; }
+[data-theme="light"] { --bg: #f8fafc; --grid: #e2e8f0; --text: #0f172a; --text-muted: #64748b; --text-dim: #94a3b8; --text-faint: #64748b; --panel: #ffffff; --panel-border: #e2e8f0; --lane-fill: rgba(248, 250, 252, 0.65); --lane-stroke: #cbd5e1; --arrow: #94a3b8; --arrow-emphasis: #059669; --mask: #ffffff; --frontend-fill: rgba(34, 211, 238, 0.15); --frontend-stroke: #0891b2; --backend-fill: rgba(52, 211, 153, 0.18); --backend-stroke: #059669; --database-fill: rgba(167, 139, 250, 0.2); --database-stroke: #7c3aed; --cloud-fill: rgba(251, 191, 36, 0.18); --cloud-stroke: #d97706; --security-fill: rgba(251, 113, 133, 0.15); --security-stroke: #e11d48; --messagebus-fill: rgba(251, 146, 60, 0.15); --messagebus-stroke: #ea580c; --external-fill: rgba(148, 163, 184, 0.18); --external-stroke: #64748b; --toolbar-bg: rgba(255, 255, 255, 0.92); --toolbar-border: #cbd5e1; --toolbar-text: #334155; --toolbar-hover: #ffffff; --toolbar-menu-bg: #ffffff; }
+svg { width: 100%; min-width: min(900px, 100%); display: block; }
+.c-grid { stroke: var(--grid); fill: none; }
+.c-mask { fill: var(--mask); stroke: none; }
+.c-frontend { fill: var(--frontend-fill); stroke: var(--frontend-stroke); }
+.c-backend { fill: var(--backend-fill); stroke: var(--backend-stroke); }
+.c-database { fill: var(--database-fill); stroke: var(--database-stroke); }
+.c-cloud { fill: var(--cloud-fill); stroke: var(--cloud-stroke); }
+.c-security { fill: var(--security-fill); stroke: var(--security-stroke); }
+.c-messagebus { fill: var(--messagebus-fill); stroke: var(--messagebus-stroke); }
+.c-external { fill: var(--external-fill); stroke: var(--external-stroke); }
+.t-primary { fill: var(--text); }
+.t-muted { fill: var(--text-muted); }
+.t-dim { fill: var(--text-dim); }
+.t-frontend { fill: var(--frontend-stroke); }
+.t-backend { fill: var(--backend-stroke); }
+.t-database { fill: var(--database-stroke); }
+.t-cloud { fill: var(--cloud-stroke); }
+.t-security { fill: var(--security-stroke); }
+.t-messagebus { fill: var(--messagebus-stroke); }
+.t-external { fill: var(--external-stroke); }
+.a-default { stroke: var(--arrow); fill: none; }
+.a-emphasis { stroke: var(--arrow-emphasis); fill: none; }
+.a-security { stroke: var(--security-stroke); fill: none; stroke-dasharray: 5, 5; }
+.a-dashed { stroke: var(--database-stroke); fill: none; stroke-dasharray: 4, 4; }
+.m-default { fill: var(--arrow); }
+.m-emphasis { fill: var(--arrow-emphasis); }
+.m-security { fill: var(--security-stroke); }
+.m-dashed { fill: var(--database-stroke); }
+.c-security-group { fill: transparent; stroke: var(--security-stroke); stroke-dasharray: 4, 4; }
+.c-region { fill: rgba(251, 191, 36, 0.05); stroke: var(--cloud-stroke); stroke-dasharray: 8, 4; }
+.c-lane { fill: var(--lane-fill); stroke: var(--lane-stroke); stroke-dasharray: 6, 6; }
+:root, svg { --bg: #020617; --grid: #1e293b; --text: #ffffff; --text-muted: #94a3b8; --text-dim: #475569; --text-faint: #7d8da1; --panel: rgba(15, 23, 42, 0.5); --panel-border: #1e293b; --lane-fill: rgba(15, 23, 42, 0.22); --lane-stroke: #334155; --arrow: #64748b; --arrow-emphasis: #34d399; --mask: #0f172a; --frontend-fill: rgba(8, 51, 68, 0.4); --frontend-stroke: #22d3ee; --backend-fill: rgba(6, 78, 59, 0.4); --backend-stroke: #34d399; --database-fill: rgba(76, 29, 149, 0.4); --database-stroke: #a78bfa; --cloud-fill: rgba(120, 53, 15, 0.3); --cloud-stroke: #fbbf24; --security-fill: rgba(136, 19, 55, 0.4); --security-stroke: #fb7185; --messagebus-fill: rgba(251, 146, 60, 0.3); --messagebus-stroke: #fb923c; --external-fill: rgba(30, 41, 59, 0.5); --external-stroke: #94a3b8; --toolbar-bg: rgba(15, 23, 42, 0.8); --toolbar-border: #334155; --toolbar-text: #e2e8f0; --toolbar-hover: rgba(15, 23, 42, 0.95); --toolbar-menu-bg: #0f172a; }
+</style><rect width="100%" height="100%" fill="#020617"/>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default"/>
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis"/>
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security"/>
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed"/>
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+
+        <!-- Boundaries (behind everything) -->
+        <rect x="210" y="190" width="180" height="286" rx="12" class="c-region" stroke-width="1"/>
+        <text x="218" y="208" class="t-cloud" font-size="9" font-weight="600">UI layer</text>
+
+        <rect x="530" y="90" width="400" height="506" rx="12" class="c-region" stroke-width="1"/>
+        <text x="538" y="108" class="t-cloud" font-size="9" font-weight="600">Agent core</text>
+
+        <rect x="970" y="120" width="190" height="446" rx="12" class="c-region" stroke-width="1"/>
+        <text x="978" y="138" class="t-cloud" font-size="9" font-weight="600">Capabilities</text>
+
+        <rect x="1190" y="170" width="190" height="426" rx="12" class="c-region" stroke-width="1"/>
+        <text x="1198" y="188" class="t-cloud" font-size="9" font-weight="600">Storage</text>
+
+        <!-- Connection paths (before components for correct z-order) -->
+        <path d="M 140 350 L 182 350 Q 190 350 190 342 L 190 256 Q 190 248 198 248 L 240 248" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 140 350 L 182 350 Q 190 350 190 358 L 190 420 Q 190 428 198 428 L 240 428" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 360 248 L 452 248 Q 460 248 460 256 L 460 340 Q 460 348 468 348 L 560 348" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 360 428 L 452 428 Q 460 428 460 420 L 460 356 Q 460 348 468 348 L 560 348" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 680 348 L 628 348 Q 620 348 620 340 L 620 156 Q 620 148 612 148 L 560 148" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 680 348 L 628 348 Q 620 348 620 356 L 620 540 Q 620 548 612 548 L 560 548" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 680 348 L 722 348 Q 730 348 730 340 L 730 156 Q 730 148 738 148 L 780 148" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 680 348 L 722 348 Q 730 348 730 356 L 730 540 Q 730 548 738 548 L 780 548" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 680 348 L 832 348 Q 840 348 840 340 L 840 186 Q 840 178 848 178 L 1000 178" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 1000 348 L 853 348 Q 845 348 845 340 L 845 156 Q 845 148 837 148 L 690 148" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 1000 518 L 848 518 Q 840 518 840 510 L 840 356 Q 840 348 832 348 L 680 348" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 680 348 L 942 348 Q 950 348 950 340 L 950 236 Q 950 228 958 228 L 1220 228" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path d="M 1285 256 L 1285 360" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path d="M 680 348 L 942 348 Q 950 348 950 356 L 950 540 Q 950 548 958 548 L 1220 548" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+
+        <!-- Components -->
+        <rect x="30" y="320" width="110" height="60" rx="6" class="c-mask"/>
+        <rect x="30" y="320" width="110" height="60" rx="6" class="c-external" stroke-width="1.5"/>
+        <text x="85" y="348" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Developer</text>
+        <text x="85" y="364" class="t-muted" font-size="9" text-anchor="middle">terminal</text>
+
+        <rect x="240" y="220" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="240" y="220" width="120" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+        <text x="300" y="246" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">CLI</text>
+        <text x="300" y="262" class="t-muted" font-size="9" text-anchor="middle">--print</text>
+
+        <rect x="240" y="400" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="240" y="400" width="120" height="56" rx="6" class="c-frontend" stroke-width="1.5"/>
+        <text x="300" y="426" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">TUI</text>
+        <text x="300" y="442" class="t-muted" font-size="9" text-anchor="middle">pi-tui</text>
+
+        <rect x="560" y="320" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="560" y="320" width="120" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="620" y="346" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Agent Loop</text>
+        <text x="620" y="362" class="t-muted" font-size="9" text-anchor="middle">state machine</text>
+        <text x="620" y="368" class="t-backend" font-size="7" text-anchor="middle">done hard gate</text>
+
+        <rect x="560" y="120" width="130" height="56" rx="6" class="c-mask"/>
+        <rect x="560" y="120" width="130" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="625" y="146" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Tool Registry</text>
+        <text x="625" y="162" class="t-muted" font-size="9" text-anchor="middle">permission tiers</text>
+
+        <rect x="560" y="520" width="130" height="56" rx="6" class="c-mask"/>
+        <rect x="560" y="520" width="130" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="625" y="546" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Context Mgr</text>
+        <text x="625" y="562" class="t-muted" font-size="9" text-anchor="middle">compact/overflow</text>
+
+        <rect x="780" y="120" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="780" y="120" width="120" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="840" y="146" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Subagent</text>
+        <text x="840" y="162" class="t-muted" font-size="9" text-anchor="middle">TaskResult</text>
+
+        <rect x="780" y="520" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="780" y="520" width="120" height="56" rx="6" class="c-security" stroke-width="1.5"/>
+        <text x="840" y="546" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Judge</text>
+        <text x="840" y="562" class="t-muted" font-size="9" text-anchor="middle">/goal verify</text>
+
+        <rect x="1000" y="150" width="130" height="56" rx="6" class="c-mask"/>
+        <rect x="1000" y="150" width="130" height="56" rx="6" class="c-cloud" stroke-width="1.5"/>
+        <text x="1065" y="176" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">AI Provider</text>
+        <text x="1065" y="192" class="t-muted" font-size="9" text-anchor="middle">OpenAI-compatible</text>
+
+        <rect x="1000" y="320" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="1000" y="320" width="120" height="56" rx="6" class="c-cloud" stroke-width="1.5"/>
+        <text x="1060" y="346" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">MCP Servers</text>
+        <text x="1060" y="362" class="t-muted" font-size="9" text-anchor="middle">pinned</text>
+
+        <rect x="1000" y="490" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="1000" y="490" width="120" height="56" rx="6" class="c-backend" stroke-width="1.5"/>
+        <text x="1060" y="516" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Skills</text>
+        <text x="1060" y="532" class="t-muted" font-size="9" text-anchor="middle">prompt assembly</text>
+
+        <rect x="1220" y="200" width="130" height="56" rx="6" class="c-mask"/>
+        <rect x="1220" y="200" width="130" height="56" rx="6" class="c-database" stroke-width="1.5"/>
+        <text x="1285" y="226" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Session Tape</text>
+        <text x="1285" y="242" class="t-muted" font-size="9" text-anchor="middle">JSONL append-only</text>
+
+        <rect x="1220" y="360" width="130" height="56" rx="6" class="c-mask"/>
+        <rect x="1220" y="360" width="130" height="56" rx="6" class="c-database" stroke-width="1.5"/>
+        <text x="1285" y="386" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">SQLite Index</text>
+        <text x="1285" y="402" class="t-muted" font-size="9" text-anchor="middle">FTS5 search</text>
+
+        <rect x="1220" y="520" width="120" height="56" rx="6" class="c-mask"/>
+        <rect x="1220" y="520" width="120" height="56" rx="6" class="c-database" stroke-width="1.5"/>
+        <text x="1280" y="546" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Memory</text>
+        <text x="1280" y="562" class="t-muted" font-size="9" text-anchor="middle">4-layer</text>
+
+        <!-- Connection labels -->
+        <rect x="175" y="279" width="30" height="14" rx="3" class="c-mask"/>
+        <text x="190" y="289" class="t-backend" font-size="8" text-anchor="middle">task</text>
+        <rect x="158.6" y="369" width="62.8" height="14" rx="3" class="c-mask"/>
+        <text x="190" y="379" class="t-muted" font-size="8" text-anchor="middle">interactive</text>
+        <rect x="445" y="278" width="30" height="14" rx="3" class="c-mask"/>
+        <text x="460" y="288" class="t-muted" font-size="8" text-anchor="middle">run</text>
+        <rect x="435.8" y="368" width="48.4" height="14" rx="3" class="c-mask"/>
+        <text x="460" y="378" class="t-muted" font-size="8" text-anchor="middle">continue</text>
+        <rect x="591" y="228" width="58" height="14" rx="3" class="c-mask"/>
+        <text x="620" y="238" class="t-muted" font-size="8" text-anchor="middle">tool calls</text>
+        <rect x="598.2" y="428" width="43.6" height="14" rx="3" class="c-mask"/>
+        <text x="620" y="438" class="t-muted" font-size="8" text-anchor="middle">compact</text>
+        <rect x="713" y="228" width="34" height="14" rx="3" class="c-mask"/>
+        <text x="730" y="238" class="t-messagebus" font-size="8" text-anchor="middle">spawn</text>
+        <rect x="710.6" y="428" width="38.8" height="14" rx="3" class="c-mask"/>
+        <text x="730" y="438" class="t-messagebus" font-size="8" text-anchor="middle">verify</text>
+        <rect x="825" y="243" width="30" height="14" rx="3" class="c-mask"/>
+        <text x="840" y="253" class="t-backend" font-size="8" text-anchor="middle">chat</text>
+        <rect x="806.4" y="228" width="77.2" height="14" rx="3" class="c-mask"/>
+        <text x="845" y="238" class="t-messagebus" font-size="8" text-anchor="middle">register tools</text>
+        <rect x="818.2" y="413" width="43.6" height="14" rx="3" class="c-mask"/>
+        <text x="840" y="423" class="t-messagebus" font-size="8" text-anchor="middle">prompts</text>
+        <rect x="930.6" y="268" width="38.8" height="14" rx="3" class="c-mask"/>
+        <text x="950" y="278" class="t-backend" font-size="8" text-anchor="middle">events</text>
+
+        <rect x="916.2" y="428" width="67.6" height="14" rx="3" class="c-mask"/>
+        <text x="950" y="438" class="t-messagebus" font-size="8" text-anchor="middle">read / write</text>
+
+        <!-- Legend -->
+        <text x="40" y="635" class="t-primary" font-size="9" font-weight="600">Legend</text>
+        <rect x="40" y="640" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+        <text x="60" y="648" class="t-muted" font-size="8">External</text>
+        <rect x="138" y="640" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
+        <text x="158" y="648" class="t-muted" font-size="8">Frontend</text>
+        <rect x="236" y="640" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+        <text x="256" y="648" class="t-muted" font-size="8">Backend</text>
+        <rect x="329" y="640" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+        <text x="349" y="648" class="t-muted" font-size="8">Security</text>
+        <rect x="427" y="640" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
+        <text x="447" y="648" class="t-muted" font-size="8">Cloud</text>
+        <rect x="510" y="640" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+        <text x="530" y="648" class="t-muted" font-size="8">Database</text>
+      </svg>
