@@ -43,8 +43,6 @@ A local terminal coding agent. Single binary, eval-driven, audit-friendly.
 
 *chita* is short for **cheetah** — the fastest land animal on Earth, sprinting at up to ~110 km/h (68 mph). Elegant, built for speed, yet fragile. I first saw one on the African savanna, and it has haunted my thoughts ever since. This project is a small reminder that a creature of such extreme speed and grace still exists on this planet.
 
-*ASCII cheetah adapted from [Vecteezy](https://www.vecteezy.com/).*
-
 ## Install
 
 Build the standalone binary (Bun compile, one-line install like codex):
