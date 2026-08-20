@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "chita Architecture",
+    "subtitle": "A local terminal coding agent — single binary, eval-driven, audit-friendly",
+    "output": "chita-architecture.html"
+  },
+  "components": [
+    { "id": "dev", "type": "external", "label": "Developer", "sublabel": "terminal", "pos": [30, 320], "size": [110, 60] },
+    { "id": "cli", "type": "frontend", "label": "CLI", "sublabel": "--print", "pos": [240, 220], "size": [120, 56] },
+    { "id": "tui", "type": "frontend", "label": "TUI", "sublabel": "pi-tui", "pos": [240, 400], "size": [120, 56] },
+    { "id": "loop", "type": "backend", "label": "Agent Loop", "sublabel": "state machine", "pos": [560, 320], "size": [120, 56], "tag": "done hard gate" },
+    { "id": "tools", "type": "backend", "label": "Tool Registry", "sublabel": "permission tiers", "pos": [560, 120], "size": [130, 56] },
+    { "id": "ctx", "type": "backend", "label": "Context Mgr", "sublabel": "compact/overflow", "pos": [560, 520], "size": [130, 56] },
+    { "id": "sub", "type": "backend", "label": "Subagent", "sublabel": "TaskResult", "pos": [780, 120], "size": [120, 56] },
+    { "id": "judge", "type": "security", "label": "Judge", "sublabel": "/goal verify", "pos": [780, 520], "size": [120, 56] },
+    { "id": "ai", "type": "cloud", "label": "AI Provider", "sublabel": "OpenAI-compatible", "pos": [1000, 150], "size": [130, 56] },
+    { "id": "mcp", "type": "cloud", "label": "MCP Servers", "sublabel": "pinned", "pos": [1000, 320], "size": [120, 56] },
+    { "id": "skills", "type": "backend", "label": "Skills", "sublabel": "prompt assembly", "pos": [1000, 490], "size": [120, 56] },
+    { "id": "tape", "type": "database", "label": "Session Tape", "sublabel": "JSONL append-only", "pos": [1220, 200], "size": [130, 56] },
+    { "id": "sqlite", "type": "database", "label": "SQLite Index", "sublabel": "FTS5 search", "pos": [1220, 360], "size": [130, 56] },
+    { "id": "mem", "type": "database", "label": "Memory", "sublabel": "4-layer", "pos": [1220, 520], "size": [120, 56] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "UI layer", "wraps": ["cli", "tui"] },
+    { "kind": "region", "label": "Agent core", "wraps": ["loop", "tools", "ctx", "sub", "judge"] },
+    { "kind": "region", "label": "Capabilities", "wraps": ["ai", "mcp", "skills"] },
+    { "kind": "region", "label": "Storage", "wraps": ["tape", "sqlite", "mem"] }
+  ],
+  "connections": [
+    { "from": "dev", "to": "cli", "label": "task", "variant": "emphasis" },
+    { "from": "dev", "to": "tui", "label": "interactive" },
+    { "from": "cli", "to": "loop", "label": "run" },
+    { "from": "tui", "to": "loop", "label": "continue" },
+    { "from": "loop", "to": "tools", "label": "tool calls" },
+    { "from": "loop", "to": "ctx", "label": "compact" },
+    { "from": "loop", "to": "sub", "label": "spawn", "variant": "dashed" },
+    { "from": "loop", "to": "judge", "label": "verify", "variant": "dashed" },
+    { "from": "loop", "to": "ai", "label": "chat", "variant": "emphasis" },
+    { "from": "mcp", "to": "tools", "label": "register tools", "variant": "dashed" },
+    { "from": "skills", "to": "loop", "label": "prompts", "variant": "dashed" },
+    { "from": "loop", "to": "tape", "label": "events", "variant": "emphasis" },
+    { "from": "tape", "to": "sqlite", "variant": "dashed" },
+    { "from": "loop", "to": "mem", "label": "read / write", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "UI layer", "items": ["CLI --print for one-shot tasks", "TUI (pi-tui) for interactive sessions"] },
+    { "dot": "emerald", "title": "Agent core", "items": ["Agent loop state machine with a done() hard gate", "Tool registry, context compaction, subagents, /goal judge"] },
+    { "dot": "amber", "title": "Capabilities", "items": ["OpenAI-compatible AI provider (remote)", "MCP servers register tools into the registry", "Skills assemble prompts locally"] },
+    { "dot": "violet", "title": "Storage", "items": ["Tape-first JSONL is the source of truth", "SQLite is only an index layer", "Four-layer memory"] }
+  ]
+}
