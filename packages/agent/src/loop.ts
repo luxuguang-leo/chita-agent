@@ -19,6 +19,7 @@ import { registerBuiltinTools } from "../../tools/src/builtin.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
 import { ContextManager } from "./context.ts";
 import { classifyError } from "./errors.ts";
+import { classify } from "./guardian.ts";
 
 export type LoopState = "IDLE" | "THINKING" | "TOOL_CALL" | "OBSERVING" | "DONE" | "ERROR" | "CANCELLED" | "WAITING_USER";
 
@@ -62,6 +63,11 @@ export interface Provider {
 export interface LoopHooks {
   /** Permission/audit interception (v2.1 §2.3) */
   beforeToolCall?(toolName: string, args: Record<string, unknown>, ctx: ToolContext): Promise<boolean>;
+  /** M-next interactive approval (v2.1 §8.2): called when Guardian classifies
+   *  a call as `ask` and autoApproveAsk is off. Return true to allow, false
+   *  to deny. TUI renders a one-line `[tool] allow / deny` prompt; --print
+   *  leaves it unset → deny (safe default, no TTY wait). */
+  onPermissionRequest?(toolName: string, args: Record<string, unknown>, reason: string): Promise<boolean>;
   /** Post-execution interception: can rewrite/scrub the result (v2.1 F4 redaction) */
   afterToolCall?(
     toolName: string,
@@ -90,8 +96,14 @@ export interface LoopOptions {
    *  recovery. Falls back to DEFAULT_MAX_TOKENS when unset (cur-057). */
   maxTokens?: number;
   /** M1 --print dev mode: auto-approve ask-level tools (write/bash) without a prompt.
-   *  (v2.1 §2.3; WAITING_USER interactive approval is M1.5+) */
+   *  (v2.1 §2.3; WAITING_USER interactive approval is M1.5+)
+   *  M-next three-branch semantics (cur-094): Guardian `deny` always blocks and
+   *  Guardian `ask` always enters WAITING_USER — autoApproveAsk only applies to
+   *  Guardian `allow`/unmatched calls. */
   autoApproveAsk?: boolean;
+  /** M-next WAITING_USER approval timeout (ms, default 5 min). Expiry == deny
+   *  and is recorded on the tape as a timeout. */
+  permissionTimeoutMs?: number;
   /** build: full execution (default). plan: read-only analysis —
    *  write tools forbidden, bash requires explicit approval (opencode build/plan). */
   mode?: LoopMode;
@@ -438,7 +450,55 @@ export class AgentLoop {
       return this.emitToolResult(name, { ok: false, error: `blocked by plan mode (read-only analysis): ${name}` }, callId);
     }
 
-    // M1 --print dev mode: auto-approve ask-level tools (v2.1 §2.3)
+    // M-next Guardian static rules (v2.1 §8.2, cur-093/094): classify BEFORE
+    // autoApproveAsk. Three branches:
+    //   deny  → always blocked (ignores autoApproveAsk)
+    //   ask   → always WAITING_USER (ignores autoApproveAsk) unless an
+    //           interactive hook is unavailable → deny (safe, no TTY wait)
+    //   allow / unmatched → existing autoApproveAsk path
+    const guard = classify(name, args, { cwd: this.opts.cwd, mode: this.opts.mode ?? "build" });
+    if (guard.permission === "deny") {
+      return this.emitToolResult(name, { ok: false, error: `${guard.reason} (guardian[${guard.category}])` }, callId);
+    }
+    if (guard.permission === "ask") {
+      if (this.opts.hooks?.onPermissionRequest) {
+        // WAITING_USER: suspend execution, ask the user (allow/deny/timeout)
+        this.state = "WAITING_USER";
+        const timeoutMs = this.opts.permissionTimeoutMs ?? 5 * 60 * 1000;
+        let allowed: boolean;
+        let timedOut = false;
+        try {
+          const decision = this.opts.hooks.onPermissionRequest(name, args, guard.reason);
+          const result = await Promise.race([
+            decision,
+            new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)),
+          ]);
+          if (result === "timeout") {
+            timedOut = true;
+            allowed = false;
+          } else {
+            allowed = result;
+          }
+        } catch {
+          allowed = false;
+        }
+        this.state = "TOOL_CALL";
+        if (!allowed) {
+          const error = timedOut
+            ? `${guard.reason} — approval timed out (${timeoutMs}ms)`
+            : `${guard.reason} — denied by user`;
+          return this.emitToolResult(name, { ok: false, error }, callId);
+        }
+        // user allowed: fall through to execution
+        ctx.permission = "allow";
+      } else {
+        // no interactive channel (--print): deny — keep read-only safe
+        return this.emitToolResult(name, { ok: false, error: `${guard.reason} — no approval channel` }, callId);
+      }
+    }
+
+    // M1 --print dev mode: auto-approve ask-level tools (v2.1 §2.3).
+    // M-next: only reached for Guardian allow/unmatched calls (cur-094).
     if (this.opts.autoApproveAsk && ctx.permission === "ask" && this.opts.mode !== "plan") {
       ctx.permission = "allow";
     }
