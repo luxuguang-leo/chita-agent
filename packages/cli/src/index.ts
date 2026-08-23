@@ -129,6 +129,8 @@ async function main(): Promise<void> {
         "  chita                    interactive TUI",
         "  chita --version          print version",
         "  chita init               generate ~/.chita/config.json",
+        "  chita update             check + upgrade to latest GitHub release",
+        "  chita update --check     check only (exit 0 = current/available)",
         '  chita "task"             run a task (--print mode)',
         '  chita --plan "task"      read-only analysis (plan mode)',
         "  chita --judge \"task\"     run task + /goal judge verification",
@@ -142,6 +144,20 @@ async function main(): Promise<void> {
 
   if (args.includes("--version")) return printVersion();
   if (args[0] === "init") return runInit();
+  if (args[0] === "update") {
+    const { runUpdate } = await import("./update.ts");
+    const checkOnly = args.includes("--check");
+    try {
+      const result = await runUpdate({ currentVersion: VERSION, checkOnly });
+      console.log(`[chita update] ${result.message}`);
+      // exit codes (cur-099 F4): up-to-date/check-only/updated = 0, failure = 1
+      return;
+    } catch (e) {
+      console.error(`[chita update] error: ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   if (args[0] === "--resume") {
     console.log("[chita] --resume lands in M2+");
     return;
