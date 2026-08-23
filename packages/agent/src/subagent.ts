@@ -67,6 +67,9 @@ export async function runSubagent(
     mode: task.permissionScope === "inherit" ? "build" : "plan",
     // subagents never auto-approve writes unless scope says inherit
     autoApproveAsk: task.permissionScope === "inherit",
+    // No onPermissionRequest: Guardian `ask` calls fall back to
+    // "no approval channel" → deny. Stricter than inherit (F8): a subagent
+    // cannot prompt the user mid-run, so risky calls fail safe.
     maxIterations: task.maxIterations ?? 15,
     // no maxTokens: fresh context + maxIterations bound means the loop's 1M
     // spend-fuse fallback is never the binding limit here (cur-057)

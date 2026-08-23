@@ -188,6 +188,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
   let pendingInputs: string[] = []; // FIFO queue while running (cur-038)
+  // M-next WAITING_USER: pending permission approval — the loop suspends until
+  // the next input line resolves it (allow/deny/timeout). Non-null only while
+  // the loop awaits onPermissionRequest.
+  let approvalWaiter: { resolve: (allow: boolean) => void; toolName: string; reason: string } | null = null;
   // TUI-level judge budget singleton (cur-040 major: per-invocation instance
   // reset the max-3-per-session counter every /goal)
   const judgeBudget = new JudgeBudget({});
@@ -338,6 +342,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     tui.requestRender(true);
   }
 
+  /** Loop-side approval timeout (ms). Single source of truth shared by the
+   *  AgentLoop (permissionTimeoutMs) and the TUI waiter — the waiter must
+   *  expire in step with the loop so a stale input line after a loop-side
+   *  timeout falls through to the model instead of being eaten as an
+   *  approval decision (F3). */
+  const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+
   function buildLoop(): AgentLoop {
     return new AgentLoop({
       cwd: process.cwd(),
@@ -345,8 +356,37 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       mode,
       maxTokens: cfg.contextWindow, // spend fuse ≈ context window, not remaining ctx (cur-057)
       autoApproveAsk: true,
+      permissionTimeoutMs: APPROVAL_TIMEOUT_MS, // in step with the TUI waiter (F3)
       hooks: {
         beforeToolCall: async () => true,
+        // M-next WAITING_USER (v2.1 §8.2): Guardian `ask` — render a prompt
+        // and suspend until the next input line resolves it. Timeout (5 min,
+        // loop-side) resolves as deny; the loop records it on the tape. The
+        // waiter resolves itself on timeout so a late input line is NOT eaten
+        // as an approval after the loop already moved on (F3).
+        onPermissionRequest: (toolName, args, reason) => {
+          const cmd =
+            typeof args.command === "string" ? args.command
+            : typeof args.path === "string" ? args.path
+            : typeof args.pattern === "string" ? args.pattern
+            : "";
+          appendMessage("system", `⏸ guardian[${toolName}]: ${reason}`);
+          appendMessage("system", `   ${cmd.slice(0, 100) || "(no args)"} — allow / deny`);
+          return new Promise<boolean>((resolve) => {
+            let settled = false;
+            const finish = (allow: boolean) => {
+              if (settled) return; // F3: ignore late resolves after timeout/Ctrl+C
+              settled = true;
+              if (approvalWaiter?.toolName === toolName) approvalWaiter = null;
+              resolve(allow);
+            };
+            approvalWaiter = { resolve: finish, toolName, reason };
+            // align with the loop-side timeout (same constant): expire the
+            // waiter too, so a stale input line falls through to the model
+            // instead of being swallowed as a decision (F3)
+            setTimeout(() => finish(false), APPROVAL_TIMEOUT_MS);
+          });
+        },
         afterToolCall: (_n, result) => {
           if (result.output) {
             const scrubbed = scrubSecrets(result.output);
@@ -470,6 +510,17 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   async function onSubmit(raw: string): Promise<void> {
     const value = raw.trim();
     if (!value) return;
+    // M-next WAITING_USER: while the loop awaits permission, the next line is
+    // the decision — allow/yes/approve grants, anything else denies. Do NOT
+    // route it to the model (the loop is suspended mid-tool).
+    if (approvalWaiter) {
+      const w = approvalWaiter;
+      approvalWaiter = null;
+      const allow = /^(allow|yes|y|approve|ok)$/i.test(value);
+      appendMessage("system", allow ? `✓ allowed ${w.toolName} (${w.reason})` : `✗ denied ${w.toolName} (${w.reason})`);
+      w.resolve(allow);
+      return;
+    }
     // record non-slash task prompts in editor history (↑↓ navigation)
     if (!value.startsWith("/")) input.addToHistory(value);
     if (running) {
@@ -743,6 +794,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // here, so a second Ctrl+C while still running re-cancelled forever
     // (Leo: 'Ctrl+C 无法退出' during a turn).
     if (running && cancelCurrent && !ctrlCPressed) {
+      // M-next WAITING_USER: cancel also resolves a pending approval as deny —
+      // otherwise the loop would sit on the 5-min timeout after a Ctrl+C.
+      if (approvalWaiter) {
+        const w = approvalWaiter;
+        approvalWaiter = null;
+        appendMessage("system", `✗ cancelled ${w.toolName} approval`);
+        w.resolve(false);
+      }
       cancelCurrent();
       ctrlCPressed = true;
       setTimeout(() => (ctrlCPressed = false), 2000);
