@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-尚无正式 release；安全修复跟随 `main` 分支。
+No formal release yet; security fixes follow the `main` branch.
 
 | Version | Supported |
 | ------- | --------- |
@@ -10,25 +10,25 @@
 
 ## Reporting a Vulnerability
 
-请**私下**报告，勿开公开 issue。
+Please report privately — do **not** open a public issue.
 
-- **首选**：GitHub Security Advisories → "Report a vulnerability"（私有，仅维护者可见）
+- **Preferred**: GitHub Security Advisories → "Report a vulnerability" (private, visible only to maintainers)
 
-收到报告后我们会在 3 个工作日内确认，并尽快发布修复。
+We will acknowledge reports within 3 business days and ship a fix as soon as possible.
 
-## 安全设计（chita 自带的脱敏机制）
+## Security design (built-in redaction)
 
-- API key 只从环境变量 `CHITA_API_KEY` 或 `~/.chita/.env` 读取，**永不**进入 `config.json`、会话、或 git。
-- 主循环（CLI/TUI/evals）下工具输出经 `scrub.ts`（F4）脱敏后才进入模型与 tape，覆盖 `sk-` / `Bearer` / PEM 私钥 / AWS `AKIA` / GitHub token。
-- 依赖锁 `bun.lock` 为纯文本，可审计；MCP/skills 走 pinning。
+- API keys are read only from the `CHITA_API_KEY` env var or `~/.chita/.env` — **never** written to `config.json`, sessions, or git.
+- Tool output is redacted by `scrub.ts` (F4) before reaching the model or the tape in the main loop (CLI/TUI/evals), covering `sk-` / `Bearer` / PEM private keys / AWS `AKIA` / GitHub tokens.
+- `bun.lock` is plain-text and auditable; MCP/skills are pinned.
 
-## 已知限制
+## Known limitations
 
-- `scrub.ts` 目前只在 CLI/TUI/evals 主循环挂载（`afterToolCall`）；`subagent` / `workflow` / `debug-run` 路径暂未挂载，工具输出原样进入模型。
-- 用户输入（含粘贴的密钥）不脱敏，会进入会话 tape 与 compaction 摘要。
-- 以上两项见开发记录 cur-084，属已知项，后续版本补齐。
+- `scrub.ts` is currently mounted on the main loop only (`afterToolCall`); the `subagent` / `workflow` / `debug-run` paths do not redact tool output before it reaches the model.
+- User input (including pasted secrets) is not redacted and enters the session tape and compaction summaries.
+- Both items are tracked in dev log cur-084 and are planned for a later release.
 
 ## Scope
 
-- 密钥/脱敏缺陷（scrub 漏报、key 意外落盘）为最高优先级。
-- 依赖、MCP、skills 的供应链问题。
+- Key/redaction defects (scrub misses, keys accidentally persisted) are the highest priority.
+- Supply-chain issues in dependencies, MCP servers, and skills.

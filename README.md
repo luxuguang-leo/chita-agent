@@ -91,7 +91,7 @@ bun run evals --only e01   # single case
 ## Development
 
 ```bash
-bun test                   # 134 tests across packages
+bun test                   # 182 tests across packages
 bun run build              # build CLI (CI gate)
 bunx tsc --noEmit          # type check
 ```
