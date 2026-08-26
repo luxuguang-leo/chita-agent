@@ -357,6 +357,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       maxTokens: cfg.contextWindow, // spend fuse ≈ context window, not remaining ctx (cur-057)
       autoApproveAsk: true,
       permissionTimeoutMs: APPROVAL_TIMEOUT_MS, // in step with the TUI waiter (F3)
+      // P1-2 memory (cur-104 Q3): interactive TUI defaults ON; opt out via CHITA_MEMORY=0
+      memory: process.env.CHITA_MEMORY === "0" ? undefined : { enabled: true },
       hooks: {
         beforeToolCall: async () => true,
         // M-next WAITING_USER (v2.1 §8.2): Guardian `ask` — render a prompt

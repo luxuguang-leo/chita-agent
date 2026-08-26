@@ -324,3 +324,81 @@ test("state is WAITING_USER while approval is pending", async () => {
   await loop.run("send data");
   expect(observedDuringWait).toBe("WAITING_USER");
 });
+
+// --- P1-2 memory wiring (cur-104) ---------------------------------------------------
+
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { readLayer, writeLayer } from "./memory.ts";
+
+test("P1-2 memory wiring: system block injected + recurrence-only DONE write", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "chita-loop-mem-"));
+  const cwd = join(repo, "work");
+  mkdirSync(cwd, { recursive: true });
+  const statsPath = join(repo, "recurrence.json");
+  writeLayer(cwd, "memory", "- [self-report] prior session fact\n"); // must be injected
+  const doneScript = (): StreamEvent[][] => [[{ kind: "done", summary: "checkout works now" }]];
+
+  // Session 1: memory block in context after the user task (cur-104 Q2);
+  // fact observed once -> NOT written yet (RecMem threshold 2)
+  const loop1 = new AgentLoop({
+    cwd,
+    provider: new FakeProvider(doneScript),
+    memory: { enabled: true, recurrenceStatsPath: statsPath },
+  });
+  await loop1.run("fix checkout");
+  const convo1 = loop1.getConversation();
+  expect(convo1[0].role).toBe("user"); // task stays first (truncate invariant)
+  expect(convo1.some((m) => m.role === "system" && m.content.includes("[memory]"))).toBe(true);
+  expect(readLayer(cwd, "memory")).not.toContain("checkout works now");
+
+  // Session 2: same fact recurs -> consolidated as self-report
+  const loop2 = new AgentLoop({
+    cwd,
+    provider: new FakeProvider(doneScript),
+    memory: { enabled: true, recurrenceStatsPath: statsPath },
+  });
+  await loop2.run("fix checkout");
+  expect(readLayer(cwd, "memory")).toContain("- [self-report] checkout works now");
+
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("P1-2 memory wiring: disabled by default — no block, no write (eval safety)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "chita-loop-mem-off-"));
+  const cwd = join(repo, "work");
+  mkdirSync(cwd, { recursive: true });
+  writeLayer(cwd, "memory", "- [self-report] prior session fact\n");
+  const loop = new AgentLoop({
+    cwd,
+    provider: new FakeProvider(() => [[{ kind: "done", summary: "checkout works now" }]]),
+    // no memory option -> disabled (cur-104 Q3: eval/CI default OFF)
+  });
+  await loop.run("fix checkout");
+  const convo = loop.getConversation();
+  expect(convo.some((m) => m.role === "system" && m.content.includes("[memory]"))).toBe(false);
+  expect(readLayer(cwd, "memory")).not.toContain("checkout works now");
+  rmSync(repo, { recursive: true, force: true });
+});
+
+test("P1-2 memory wiring: ERROR never writes MEMORY.md", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "chita-loop-mem-err-"));
+  const cwd = join(repo, "work");
+  mkdirSync(cwd, { recursive: true });
+  const statsPath = join(repo, "recurrence.json");
+  const errProvider: Provider = {
+    async *chat(): AsyncIterable<StreamEvent> {
+      throw new Error("api boom");
+    },
+  };
+  const loop = new AgentLoop({
+    cwd,
+    provider: errProvider,
+    memory: { enabled: true, recurrenceStatsPath: statsPath },
+  });
+  const result = await loop.run("task");
+  expect(result.state).toBe("ERROR");
+  expect(readLayer(cwd, "memory")).toBe(""); // DONE-only consolidation (cur-104 Q1)
+  rmSync(repo, { recursive: true, force: true });
+});

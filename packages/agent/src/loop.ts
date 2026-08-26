@@ -20,6 +20,7 @@ import type { TraceEvent } from "../../session/src/trace.ts";
 import { ContextManager } from "./context.ts";
 import { classifyError } from "./errors.ts";
 import { classify } from "./guardian.ts";
+import { injectMemory, consolidateSessionMemory, RecurrenceGate } from "./memory.ts";
 
 export type LoopState = "IDLE" | "THINKING" | "TOOL_CALL" | "OBSERVING" | "DONE" | "ERROR" | "CANCELLED" | "WAITING_USER";
 
@@ -107,6 +108,18 @@ export interface LoopOptions {
   /** build: full execution (default). plan: read-only analysis —
    *  write tools forbidden, bash requires explicit approval (opencode build/plan). */
   mode?: LoopMode;
+  /** P1-2 memory wiring (v2.1 §2.7, cur-104): inject source-tagged memory as
+   *  a fixed system block at session start (run() only, not re-injected after
+   *  compaction) and consolidate recurring facts into MEMORY.md on DONE.
+   *  Default OFF — eval/CI stability first; CLI opts in via CHITA_MEMORY=1,
+   *  TUI defaults on (cur-104 Q3). */
+  memory?: {
+    enabled: boolean;
+    /** Injection token budget (default DEFAULT_MEMORY_BUDGET = 800) */
+    budgetTokens?: number;
+    /** RecurrenceGate stats path (default ~/.chita/stats/recurrence.json) */
+    recurrenceStatsPath?: string;
+  };
   /** Abort signal: cancels the current turn (Ctrl+C in TUI). */
   signal?: AbortSignal;
 }
@@ -162,7 +175,16 @@ export class AgentLoop {
    */
   async run(initialTask: string): Promise<{ state: LoopState; summary?: string; error?: string }> {
     this.state = "THINKING";
-    this.messages = [{ role: "user", content: initialTask }];
+    const task: ChatMessage = { role: "user", content: initialTask };
+    if (this.opts.memory?.enabled) {
+      // P1-2 (cur-104 Q2): one fixed system Memory block at session start —
+      // placed AFTER the task so truncate's keep-first (user task) invariant
+      // holds; not re-injected after compaction (avoid churn).
+      const inj = injectMemory(this.opts.cwd, this.opts.memory.budgetTokens, { mode: this.opts.mode });
+      this.messages = inj.rendered ? [task, { role: "system", content: inj.rendered }] : [task];
+    } else {
+      this.messages = [task];
+    }
     return this.runLoop();
   }
 
@@ -392,6 +414,20 @@ export class AgentLoop {
       // done tool hard gate: only done() transitions to DONE
       if (gotDone) {
         this.state = "DONE";
+        if (this.opts.memory?.enabled) {
+          // P1-2 (cur-104 Q1): DONE-only consolidation — recurring facts
+          // become self-report entries; ERROR/CANCELLED never write MEMORY.md.
+          try {
+            consolidateSessionMemory(
+              this.opts.cwd,
+              summary,
+              this.messages,
+              new RecurrenceGate(2, this.opts.memory.recurrenceStatsPath)
+            );
+          } catch {
+            // memory is best-effort — never fail the session over it
+          }
+        }
         this.opts.hooks?.onSessionEnd?.(this.state, summary);
         return { state: this.state, summary };
       }

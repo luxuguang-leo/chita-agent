@@ -64,6 +64,8 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
     mode: opts.plan ? "plan" : "build",
     maxTokens: cfg.contextWindow, // spend fuse ≈ context window, not remaining ctx (cur-057)
     autoApproveAsk: true, // --print dev mode (v2.1 §2.3)
+    // P1-2 memory (cur-104 Q3): default OFF for non-interactive runs; opt in via CHITA_MEMORY=1
+    memory: process.env.CHITA_MEMORY === "1" ? { enabled: true } : undefined,
     hooks: {
       beforeToolCall: async () => true,
       // scrub tool output before it reaches the model (v2.1 F4)

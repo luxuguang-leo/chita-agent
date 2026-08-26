@@ -10,6 +10,14 @@
  * - model tiering: main model orchestrates, cheaper model executes
  *   (Agent-goal methodology: cost control)
  *
+ * P1-2 verified-memory contract (cur-104 Q6): runSubagent's ok:true result
+ * carries acceptanceCriteria + verificationHint. The PARENT decides whether
+ * evidence is sufficient — after running verificationHint successfully it may
+ * call memory.ts recordVerified(cwd, fact, evidence) to write a `[verified]`
+ * entry. Without that parent-side verification, subagent output is only
+ * ever `self-report` (never auto-promoted; recurrence is not verification).
+ * FailedApproaches must NOT go into MEMORY.md (notes.md if anything).
+ *
  * Each subagent runs its own AgentLoop in an isolated session.
  */
 
