@@ -9,7 +9,7 @@
  *   chita --resume         session resume (M1.5+; placeholder)
  */
 
-import { loadConfig, initConfig, apiKey, CONFIG_PATH } from "./config.ts";
+import { loadConfig, initConfig, apiKey, CONFIG_PATH, budgetTokensFor } from "./config.ts";
 import { AgentLoop } from "@chita/agent/src/loop.ts";
 import { OpenAICompatibleProvider } from "@chita/ai/src/index.ts";
 import { scrubSecrets } from "@chita/agent/src/scrub.ts";
@@ -62,7 +62,8 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
     cwd: process.cwd(),
     provider,
     mode: opts.plan ? "plan" : "build",
-    maxTokens: cfg.contextWindow, // spend fuse ≈ context window, not remaining ctx (cur-057)
+    maxTokens: budgetTokensFor(cfg), // per-run spend fuse, decoupled from contextWindow (cur-057/058)
+    contextMaxTokens: cfg.contextWindow, // compaction ceiling stays on contextWindow (cur-058 review)
     autoApproveAsk: true, // --print dev mode (v2.1 §2.3)
     // P1-2 memory (cur-104 Q3): default OFF for non-interactive runs; opt in via CHITA_MEMORY=1
     memory: process.env.CHITA_MEMORY === "1" ? { enabled: true } : undefined,
@@ -88,6 +89,14 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
     if (/401|invalid api key|authentication|unauthorized/i.test(outcome.error)) {
       console.error("-> your API key looks invalid/expired. Fix it and retry:");
       console.error("   run `chita` and re-enter the key, or edit ~/.chita/.env");
+    }
+    // per-run token budget exceeded — actionable hint (cur-058): /resume in the
+    // TUI keeps the session, or raise the fuse in config. --print has no
+    // /resume, so phrase it as re-run (cur-058 review: avoid confusing hint).
+    if (/budget/i.test(outcome.error)) {
+      console.error("-> per-run token budget exceeded. Re-run with a higher budgetTokens,");
+      console.error("   or in the TUI use /resume to continue the session.");
+      console.error("   (config: ~/.chita/config.json, default budgetTokens = min(contextWindow × 8, 2M))");
     }
   }
   if (outcome.state !== "DONE") process.exitCode = 1;

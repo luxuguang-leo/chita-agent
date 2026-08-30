@@ -92,10 +92,17 @@ export interface LoopOptions {
   maxIterations?: number;
   /** Per-run token spend fuse (NOT the remaining context window): caps the
    *  cumulative prompt+completion tokens billed across this run()/continue().
-   *  Production callers pass the model's context window as a model-scaled
-   *  ceiling; real context overflow is still handled by compact/overflow
-   *  recovery. Falls back to DEFAULT_MAX_TOKENS when unset (cur-057). */
+   *  Production callers pass budgetTokensFor(cfg) here and contextMaxTokens
+   *  (cfg.contextWindow) separately; real context overflow is still handled
+   *  by compact/overflow recovery. Falls back to DEFAULT_MAX_TOKENS when
+   *  unset (cur-057). */
   maxTokens?: number;
+  /** Context-window ceiling for ContextManager compaction/overflow (NOT the
+   *  spend fuse). Decoupled from maxTokens so a large budget fuse doesn't
+   *  silently raise the compaction threshold past the model's real context
+   *  (cur-058 review: CLI/TUI pass cfg.contextWindow here). Falls back to
+   *  maxTokens when unset (library/tests). */
+  contextMaxTokens?: number;
   /** M1 --print dev mode: auto-approve ask-level tools (write/bash) without a prompt.
    *  (v2.1 §2.3; WAITING_USER interactive approval is M1.5+)
    *  M-next three-branch semantics (cur-094): Guardian `deny` always blocks and
@@ -126,8 +133,9 @@ export interface LoopOptions {
 
 const DEFAULT_MAX_ITERATIONS = 50;
 /** Fallback ONLY for callers that don't pass maxTokens (tests/library use).
- *  Production callers (CLI/TUI) pass the model's context window — the budget
- *  must adapt to the model, not a hardcoded 1M (cur-057). */
+ *  Production callers (CLI/TUI) pass budgetTokensFor(cfg) as the spend fuse
+ *  and contextMaxTokens (cfg.contextWindow) for compaction — see JSDoc above.
+ *  Must adapt to the model, not a hardcoded 1M (cur-057). */
 const DEFAULT_MAX_TOKENS = 1_000_000;
 
 export class AgentLoop {
@@ -152,7 +160,7 @@ export class AgentLoop {
       this.tools = opts.tools;
     }
     this.contextManager = new ContextManager({
-      maxTokens: opts.maxTokens,
+      maxTokens: opts.contextMaxTokens ?? opts.maxTokens,
     });
   }
   private tools: ToolRegistry;

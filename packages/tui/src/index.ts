@@ -29,7 +29,7 @@ import { runJudge } from "../../agent/src/judge.ts";
 import { JudgeBudget } from "../../agent/src/judge.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
 import { scrubSecrets } from "../../agent/src/scrub.ts";
-import { loadConfig, apiKey } from "../../cli/src/config.ts";
+import { loadConfig, apiKey, budgetTokensFor } from "../../cli/src/config.ts";
 import { renderBanner } from "../../cli/src/banner.ts";
 import { VERSION } from "../../cli/src/index.ts";
 import {
@@ -192,6 +192,22 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // the next input line resolves it (allow/deny/timeout). Non-null only while
   // the loop awaits onPermissionRequest.
   let approvalWaiter: { resolve: (allow: boolean) => void; toolName: string; reason: string } | null = null;
+
+  // --- cur-058 spinner state (waiting indicator) ---
+  const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  const SPINNER_INTERVAL_MS = 120;
+  let spinnerTimer: ReturnType<typeof setInterval> | null = null;
+  let spinnerFrame = 0;
+  let spinnerLabel = "";
+  let spinnerStart = 0;
+  /** true = label follows loop.state (model turns); false = fixed label (judge) */
+  let spinnerTrackState = true;
+  /** Running-tool indicator row in the tool strip (null when idle) */
+  let runningToolLine: Markdown | null = null;
+  let runningToolCmd = "";
+  /** Real tool name for the running indicator + status label (cur-058 review:
+   *  not every tool is bash — read/write/git show their own name). */
+  let runningToolName = "";
   // TUI-level judge budget singleton (cur-040 major: per-invocation instance
   // reset the max-3-per-session counter every /goal)
   const judgeBudget = new JudgeBudget({});
@@ -265,7 +281,16 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const MAX_TOOL_LINES = 40;
     while (toolBox.children.length > MAX_TOOL_LINES) {
       const oldest = toolBox.children[0];
-      if (oldest) toolBox.removeChild(oldest);
+      if (oldest) {
+        // defensive: if the running-tool row is the one being windowed out,
+        // drop the reference so updateActivity can't touch a dead node (cur-058)
+        if (oldest === runningToolLine) {
+          runningToolLine = null;
+          runningToolCmd = "";
+          runningToolName = "";
+        }
+        toolBox.removeChild(oldest);
+      }
     }
   }
 
@@ -342,6 +367,69 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     tui.requestRender(true);
   }
 
+  /** Map loop state -> status label (cur-058: tells the user WHAT is slow). */
+  function activityLabel(): string {
+    const st = loop?.state ?? "THINKING";
+    if (st === "TOOL_CALL") return runningToolName ? `running ${runningToolName}` : "running tool";
+    if (st === "OBSERVING") return "reading result";
+    if (st === "WAITING_USER") return "awaiting approval";
+    return "thinking";
+  }
+
+  /** Refresh the animated status bar + running-tool row (one tick). */
+  function updateActivity(): void {
+    if (!spinnerTimer) return;
+    // model turns: label follows loop.state (thinking / running tool / reading
+    // result); non-loop activity (judge) keeps the explicit label
+    if (spinnerTrackState) {
+      const label = activityLabel();
+      // label change (e.g. thinking -> running bash) resets the elapsed clock
+      if (label !== spinnerLabel) {
+        spinnerLabel = label;
+        spinnerStart = Date.now();
+      }
+    }
+    const elapsed = Math.max(0, Math.floor((Date.now() - spinnerStart) / 1000));
+    const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
+    setStatus(` | ${frame} ${spinnerLabel} (${elapsed}s)`);
+    if (runningToolLine) {
+      runningToolLine.setText(`[${runningToolName}] ${frame} ${runningToolCmd}`);
+    }
+  }
+
+  /** Idempotent: no-op while already animating. trackState=false pins the
+   *  label (e.g. judging) instead of deriving it from loop.state. */
+  function startSpinner(label: string, trackState = true): void {
+    if (spinnerTimer) return;
+    spinnerLabel = label;
+    spinnerStart = Date.now();
+    spinnerFrame = 0;
+    spinnerTrackState = trackState;
+    updateActivity();
+    spinnerTimer = setInterval(() => {
+      spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
+      updateActivity();
+    }, SPINNER_INTERVAL_MS);
+  }
+
+  /** Stop the animation and drop any stale running-tool row. */
+  function stopSpinner(): void {
+    if (spinnerTimer) {
+      clearInterval(spinnerTimer);
+      spinnerTimer = null;
+    }
+    if (runningToolLine) {
+      // turn ended before a tool_result — don't leave a stale spinning row
+      if (toolBox.children.includes(runningToolLine)) toolBox.removeChild(runningToolLine);
+      runningToolLine = null;
+      runningToolCmd = "";
+      runningToolName = "";
+    }
+    spinnerLabel = "";
+    spinnerTrackState = true;
+    tui.requestRender(true);
+  }
+
   /** Loop-side approval timeout (ms). Single source of truth shared by the
    *  AgentLoop (permissionTimeoutMs) and the TUI waiter — the waiter must
    *  expire in step with the loop so a stale input line after a loop-side
@@ -354,7 +442,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       cwd: process.cwd(),
       provider: makeProvider(),
       mode,
-      maxTokens: cfg.contextWindow, // spend fuse ≈ context window, not remaining ctx (cur-057)
+      maxTokens: budgetTokensFor(cfg), // per-run spend fuse, decoupled from contextWindow (cur-057/058)
+      contextMaxTokens: cfg.contextWindow, // compaction ceiling stays on contextWindow (cur-058 review)
       autoApproveAsk: true,
       permissionTimeoutMs: APPROVAL_TIMEOUT_MS, // in step with the TUI waiter (F3)
       // P1-2 memory (cur-104 Q3): interactive TUI defaults ON; opt out via CHITA_MEMORY=0
@@ -469,9 +558,26 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               : typeof a.pattern === "string" ? a.pattern
               : "";
             lastToolCmd.set(ev.callId ?? ev.tool?.name ?? "", cmd);
+            // running-tool indicator row (cur-058): spins with the status bar
+            // until the tool_result arrives and replaces it
+            if (!runningToolLine) {
+              runningToolCmd = briefCmd(cmd) || ev.tool?.name || "tool";
+              runningToolName = ev.tool?.name ?? "tool";
+              runningToolLine = new Markdown(`[${runningToolName}] ⠋ ${runningToolCmd}`, 0, 0, mdTheme, { color: brightWhite });
+              toolBox.addChild(runningToolLine);
+              trimTools();
+              tui.requestRender(true);
+            }
             return;
           }
           if (ev.type === "tool_result") {
+            // the running indicator row is replaced by the result row (cur-058)
+            if (runningToolLine) {
+              if (toolBox.children.includes(runningToolLine)) toolBox.removeChild(runningToolLine);
+              runningToolLine = null;
+              runningToolCmd = "";
+              runningToolName = "";
+            }
             // Show real content, not bare "ok" (Leo: [bash] ok ×5 is noise).
             // Success -> condensed summary (decorations skipped, titles
             // extracted, long output annotated); failure -> error detail.
@@ -605,7 +711,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           });
           appendMessage("system", `/goal: judging with ${judgeModel}...`);
           running = true; // judge is a long op — block re-entrancy (cur-038)
-          setStatus(" | judging...");
+          startSpinner("judging", false); // pinned label: loop isn't running here
           try {
             const verdict = await runJudge(judgeProvider, loop.getConversation(), goal);
             judgeBudget.record(verdict.tokensUsed || 2000);
@@ -617,7 +723,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             appendMessage("system", `/goal failed: ${String(e)}`);
           } finally {
             running = false;
-            setStatus();
+            stopSpinner();
           }
           return;
         }
@@ -711,7 +817,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
     running = true;
     appendMessage("user", value);
-    setStatus(" | running...");
+    startSpinner("thinking");
     streamedThisTurn = false; // reset per-turn (cur-056)
     streamingBuffer = ""; // defensive: never carry over from a prior turn
 
@@ -732,7 +838,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       endStreaming();
       running = false;
       cancelCurrent = null;
-      setStatus();
+      stopSpinner();
       // replay inputs queued while this turn was running (FIFO)
       if (pendingInputs.length > 0) {
         const next = pendingInputs.shift()!;

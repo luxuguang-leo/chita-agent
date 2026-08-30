@@ -16,12 +16,17 @@ export interface Config {
   model: string;
   /** Default tool permission: allow | ask | deny (v2.1 §2.3) */
   permissionDefault: "allow" | "ask" | "deny";
-  /** Model context window in tokens. Doubles as the agent loop's per-run
-   *  token budget (cur-057: the budget must adapt to the model, not be a
-   *  hardcoded 1M). Status bar shows usage % against it. Inferred from the
-   *  model name when not set explicitly (DeepSeek 1M, Claude 200K, GLM/
-   *  Moonshot/Qwen 128K). */
+  /** Model context window in tokens. Used for context compaction threshold
+   *  and status-bar ctx % display (cur-057 fix: no longer doubles as the
+   *  per-run spend fuse — see budgetTokens). Inferred from the model
+   *  name when not set explicitly (DeepSeek 1M, Claude 200K, GLM/Moonshot/
+   *  Qwen 128K). */
   contextWindow: number;
+  /** Per-run cumulative API spend fuse (tokens), decoupled from contextWindow.
+   *  Defaults to contextWindow × 8 when not set — long tasks re-send the whole
+   *  session every turn, so a 128K context can burn 161K+ in one run; the fuse
+   *  must scale with the model, not equal the context window. */
+  budgetTokens?: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -36,7 +41,18 @@ export const CONFIG_DIR = `${process.env.HOME}/.chita`;
 export const CONFIG_PATH = `${CONFIG_DIR}/config.json`;
 
 /** Whitelist: config.json only accepts these keys; unknown keys (e.g. apiKey) never enter memory */
-const CONFIG_KEYS = ["provider", "model", "permissionDefault", "contextWindow"] as const;
+const CONFIG_KEYS = ["provider", "model", "permissionDefault", "contextWindow", "budgetTokens"] as const;
+
+/** Per-run spend fuse: explicit budgetTokens wins, else contextWindow × 8.
+ *  contextWindow × 8 keeps the original "model-scaled ceiling" intent (cur-057)
+ *  while giving long multi-turn runs headroom: 128K ctx → 1M fuse.
+ *  Capped at 2M even for 1M-context models (DeepSeek) so a default config
+ *  can't silently budget 8M tokens per run (cur-058 review: explicit
+ *  budgetTokens still wins and is uncapped). */
+export function budgetTokensFor(cfg: Config): number {
+  if (cfg.budgetTokens !== undefined) return cfg.budgetTokens;
+  return Math.min(cfg.contextWindow * 8, 2_000_000);
+}
 
 /** Known model context windows (tokens). Prefix-matched, most specific
  *  first — mirrors how litellm/openrouter resolve contexts: DS 1M, Kimi

@@ -154,6 +154,34 @@ test("builtin tools registered by default", () => {
   expect(names).toContain("done");
 });
 
+test("contextMaxTokens decouples compaction threshold from spend fuse (cur-058)", async () => {
+  // Regression: before the fix, ContextManager got maxTokens (the spend fuse),
+  // so a 1M fuse pushed the compaction threshold to ~900K — a 128K model would
+  // blow past its real context before ever compacting. Now the loop must
+  // compact at contextMaxTokens (300 → threshold 270), NOT at maxTokens.
+  const truncatedEvents: string[] = [];
+  const big = "x".repeat(400); // ~100 tokens by 4× heuristic; 6 turns ≈ 600+ tokens
+  const script: StreamEvent[][] = Array.from({ length: 6 }, (): StreamEvent[] => [
+    { kind: "message", message: { role: "assistant", content: big } },
+  ]).concat([[{ kind: "done", summary: "done" }]]);
+  const loop = new AgentLoop({
+    cwd: "/tmp",
+    provider: new FakeProvider(() => script),
+    maxTokens: 1_000_000, // spend fuse — must NOT be the compaction ceiling
+    contextMaxTokens: 300, // real context window → threshold 270
+    hooks: {
+      onEvent: (ev) => {
+        if (ev.type === "context_truncated") truncatedEvents.push("truncated");
+      },
+    },
+  });
+  const result = await loop.run("task");
+  expect(result.state).toBe("DONE");
+  // If ContextManager had used maxTokens (1M), threshold ≈ 900K and no
+  // truncation would fire on ~600 tokens. Firing proves decoupling.
+  expect(truncatedEvents.length).toBeGreaterThan(0);
+});
+
 /* ------------------- M-next: Guardian + WAITING_USER ------------------- */
 
 test("guardian deny blocks the tool even with autoApproveAsk (three-branch #1)", async () => {
