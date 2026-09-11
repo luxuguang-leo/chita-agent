@@ -7,7 +7,7 @@
  */
 
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Tape, tapePaths } from "./tape.ts";
@@ -108,17 +108,37 @@ test("tape: stale lock (dead pid) is taken over", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("tape: second open of same session is prevented", () => {
+test("tape: same-process reopen shares one handle (refcount keeps the lock)", () => {
   const { root, cwd } = tempRoot();
-  const t1 = Tape.open(cwd, "sess-lock", root);
-  // Second open should not silently corrupt; our lock file makes it throw
-  let threw = false;
-  try {
-    Tape.open(cwd, "sess-lock", root);
-  } catch {
-    threw = true;
-  }
-  expect(threw).toBe(true);
-  t1.close();
+  const paths = tapePaths(cwd, "sess-refs", root);
+  const t1 = Tape.open(cwd, "sess-refs", root);
+  // e.g. /fork opening its own active session: same handle, one lock holder
+  const t2 = Tape.open(cwd, "sess-refs", root);
+  expect(t2).toBe(t1);
+
+  t2.close(); // borrowed holder released
+  t1.append({ type: "message", role: "user", content: "still writable" } as never);
+  expect(t1.readAll().length).toBe(1); // fd + lock survived
+  expect(existsSync(paths.tape + ".lock")).toBe(true);
+
+  t1.close(); // last holder released -> lock file gone
+  expect(existsSync(paths.tape + ".lock")).toBe(false);
+  t1.close(); // idempotent
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("tape: another live process blocks open() and tryOpen()", () => {
+  const { root, cwd } = tempRoot();
+  const paths = tapePaths(cwd, "sess-held", root);
+  mkdirSync(paths.dir, { recursive: true });
+  // A live foreign pid in the lock file == another chita holding the session
+  const child = Bun.spawn(["sleep", "5"], { stdout: "ignore", stderr: "ignore" });
+  writeFileSync(paths.tape + ".lock", String(child.pid));
+
+  expect(Tape.tryOpen(cwd, "sess-held", root)).toBeNull();
+  expect(() => Tape.open(cwd, "sess-held", root)).toThrow(/locked by another process/);
+  expect(Tape.holderPid(cwd, "sess-held", root)).toBe(child.pid);
+
+  child.kill();
   rmSync(root, { recursive: true, force: true });
 });

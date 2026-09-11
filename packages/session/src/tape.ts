@@ -35,6 +35,20 @@ export function tapePaths(cwd: string, sessionId: string, root = SESSIONS_ROOT):
   return { dir, tape: join(dir, `${sessionId}.jsonl`) };
 }
 
+/** Handles held by THIS process, keyed per session. Re-opening a tape we
+ *  already hold (`/fork` reads its own active session, `/tree` walks it) must
+ *  share one handle: the file lock would otherwise treat our own second open
+ *  as a foreign process and throw. `refs` keeps the lock and fd alive until the
+ *  last holder closes (cur-113 review). */
+const heldTapes = new Map<string, { tape: Tape; refs: number }>();
+
+/** Thrown when another live process holds the session lock. */
+export class SessionLockedError extends Error {}
+
+function heldKey(cwd: string, sessionId: string, root: string): string {
+  return `${root}\u0000${cwdKey(cwd)}\u0000${sessionId}`;
+}
+
 /** Append-only tape writer. One instance per session; flock held for lifetime. */
 export class Tape {
   readonly paths: TapePaths;
@@ -50,22 +64,61 @@ export class Tape {
   private lockPath: string | null = null;
   private lockFd: number | null = null;
 
-  private constructor(paths: TapePaths, fd: number, root: string) {
+  private constructor(paths: TapePaths, fd: number, root: string, private readonly key: string) {
     this.paths = paths;
     this.fd = fd;
     this.root = root;
   }
 
   /**
-   * Open (or create) a session tape with an exclusive lock.
+   * Open (or create) a session tape with an exclusive lock, sharing the handle
+   * this process already holds for that session.
    * Throws if another process already holds the lock (second --resume).
    */
   static open(cwd: string, sessionId: string, root = SESSIONS_ROOT): Tape {
+    const held = heldTapes.get(heldKey(cwd, sessionId, root));
+    if (held) {
+      held.refs++;
+      return held.tape;
+    }
+    return Tape.acquire(cwd, sessionId, root);
+  }
+
+  /** Like `open`, but returns null instead of throwing when another live
+   *  process holds the session — the TUI startup scan must skip active
+   *  sessions and keep looking, not abort resume (cur-113 review #2). */
+  static tryOpen(cwd: string, sessionId: string, root = SESSIONS_ROOT): Tape | null {
+    const held = heldTapes.get(heldKey(cwd, sessionId, root));
+    if (held) {
+      held.refs++;
+      return held.tape;
+    }
+    try {
+      return Tape.acquire(cwd, sessionId, root);
+    } catch (e) {
+      if (e instanceof SessionLockedError) return null;
+      throw e;
+    }
+  }
+
+  /** Pid recorded in the session lock file (null when it is unlocked). */
+  static holderPid(cwd: string, sessionId: string, root = SESSIONS_ROOT): number | null {
+    try {
+      const pid = Number(readFileSync(tapePaths(cwd, sessionId, root).tape + ".lock", "utf-8").trim());
+      return Number.isInteger(pid) && pid > 0 ? pid : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Take the file lock and register the handle for this process. */
+  private static acquire(cwd: string, sessionId: string, root: string): Tape {
+    const key = heldKey(cwd, sessionId, root);
     const paths = tapePaths(cwd, sessionId, root);
     mkdirSync(paths.dir, { recursive: true });
     const fd = openSync(paths.tape, "a+");
 
-    const tape = new Tape(paths, fd, root);
+    const tape = new Tape(paths, fd, root, key);
     const lockPath = paths.tape + ".lock";
 
     // Lock strategy: lock file with pid content. wx fails if it exists;
@@ -86,7 +139,7 @@ export class Tape {
           continue;
         }
         closeSync(fd);
-        throw new Error(`session ${sessionId} is locked by another process (${lockPath})`);
+        throw new SessionLockedError(`session ${sessionId} is locked by another process (${lockPath})`);
       }
     }
     tape.lockPath = lockPath;
@@ -106,6 +159,7 @@ export class Tape {
         }
       }
     }
+    heldTapes.set(key, { tape, refs: 1 });
     return tape;
   }
 
@@ -192,7 +246,19 @@ export class Tape {
     } as unknown as Omit<TraceEvent, "seq" | "ts">);
   }
 
+  /** Release ONE holder. The fd and lock survive while this process still
+   *  holds the tape, so `/fork` closing a borrowed handle cannot tear down the
+   *  active session (cur-113 review #1). Idempotent once fully released. */
   close(): void {
+    const held = heldTapes.get(this.key);
+    if (held) {
+      held.refs--;
+      if (held.refs > 0) return;
+      heldTapes.delete(this.key);
+    } else if (!this.locked) {
+      return;
+    }
+    this.locked = false;
     if (this.fd !== undefined) closeSync(this.fd);
     if (this.lockFd !== null) {
       try {

@@ -46,7 +46,19 @@ import { historyFromEvents } from "../../agent/src/history.ts";
 /** Describe the most recent session in this cwd: id + first user message +
  *  age. Returns null when none. Used for the startup hint and /resume
  *  without an id (Leo: opaque random ids are unfriendly). */
-function recentSessionSummary(cwd: string): { id: string; first: string; age: string } | null {
+/** Session held by another live chita, named for a one-line system notice. */
+function lockedNotice(id: string, pid: number | null): string {
+  return `session ${id} is open in another chita${pid ? ` (pid ${pid})` : ""}`;
+}
+
+/** Newest session in this cwd that no other live chita holds. The returned
+ *  tape is KEPT OPEN (one handle, one lock): it becomes this process's active
+ *  writer, so the handle must not be re-acquired later (cur-114 review #1).
+ *  Sessions already held are reported through `onLocked` and skipped. */
+function openRecentSession(
+  cwd: string,
+  onLocked: (id: string, pid: number | null) => void
+): { tape: Tape; id: string; first: string; age: string } | null {
   try {
     const dir = join(SESSIONS_ROOT, cwdKey(cwd));
     if (!existsSync(dir)) return null;
@@ -56,18 +68,28 @@ function recentSessionSummary(cwd: string): { id: string; first: string; age: st
     files.sort((a, b) => statSync(join(dir, b)).mtimeMs - statSync(join(dir, a)).mtimeMs);
     for (const f of files) {
       const id = f.replace(/\.jsonl$/, "");
-      const tape = Tape.open(cwd, id);
-      const events = tape.readAll();
-      const created = tape.readMeta()?.createdAt;
-      tape.close();
-      if (events.length === 0) continue;
+      const tape = Tape.tryOpen(cwd, id);
+      if (!tape) {
+        onLocked(id, Tape.holderPid(cwd, id));
+        continue;
+      }
+      let events: TraceEvent[];
+      try {
+        events = tape.readAll();
+      } catch {
+        tape.close(); // unreadable session: release and keep looking
+        continue;
+      }
       const firstUser = events.find(
         (e): e is Extract<TraceEvent, { type: "message" }> => e.type === "message" && e.role === "user"
       );
       const first = (firstUser?.content ?? "").replace(/\s+/g, " ").trim();
-      if (!first) continue;
-      const age = created ? ageLabel(created) : "";
-      return { id, first: first.slice(0, 40), age };
+      if (events.length === 0 || !first) {
+        tape.close();
+        continue;
+      }
+      const created = tape.readMeta()?.createdAt;
+      return { tape, id, first: first.slice(0, 40), age: created ? ageLabel(created) : "" };
     }
   } catch {
     return null;
@@ -172,14 +194,17 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // --- session state ---
   let loop: AgentLoop | null = null;
   let sessionId: string | null = null; // bound to the active tape session
+  /** The session tape this process holds (and writes through) — holding it for
+   *  the session's lifetime is what keeps a second chita in this cwd out of the
+   *  same session (cur-113). */
+  let activeTape: Tape | null = null;
+  // release the session lock on any exit so the next chita can resume it
+  process.on("exit", () => activeTape?.close());
 
   // persist a trace event to the session tape (cur-042: all turns, not just user)
   const tapeAppend = (ev: unknown) => {
-    if (!sessionId) return;
     try {
-      const tape = Tape.open(process.cwd(), sessionId);
-      tape.append(ev as never);
-      tape.close();
+      activeTape?.append(ev as never);
     } catch {
       // tape write is best-effort; never break the turn for it
     }
@@ -675,6 +700,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         case "/new":
           loop = null;
           sessionId = null; // new session unbinds the tape (cur-040 minor)
+          activeTape?.close(); // release this session's lock (cur-113)
+          activeTape = null;
           toolResults.clear(); // no stale /tool output (cur-043 nit)
           pendingInputs = []; // drop queued inputs from old session (cur-043 nit)
           tokensUsed = { total: 0, input: 0, output: 0 }; // fresh stats (Leo: /new kept old ↑↓/ctx)
@@ -750,16 +777,21 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         }
         case "/resume": {
           let id = value.split(/\s+/)[1];
+          let opened: Tape | undefined;
           if (!id) {
             // no id: resume the most recent session in this cwd (Leo-friendly)
-            const recent = recentSessionSummary(process.cwd());
+            // — the scan hands back the held handle, adopted below
+            const recent = openRecentSession(process.cwd(), (lockedId, pid) =>
+              appendMessage("system", `${lockedNotice(lockedId, pid)} — skipped`)
+            );
             if (!recent) {
               appendMessage("system", "no previous session in this directory — /resume <session-id>");
               return;
             }
             id = recent.id;
+            opened = recent.tape;
           }
-          if (resumeSession(id)) {
+          if (adoptSession(id, opened)) {
             appendMessage("system", `resumed ${id}`);
           }
           return;
@@ -772,16 +804,21 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           const parentId = sessionId ?? `sess-${Date.now().toString(36)}`;
           const parent = Tape.open(process.cwd(), parentId);
           const childId = `fork-${Date.now().toString(36)}`;
-          const child = forkWithSummary(parent, childId, "manual fork from TUI", {
-            cwd: process.cwd(),
-            model: cfg.model,
-            provider: "openai-compatible",
-            createdAt: new Date().toISOString(),
-          });
-          parent.close();
-          child.close();
-          sessionId = parentId;
-          appendMessage("system", `forked ${parentId} -> ${childId}`);
+          try {
+            const child = forkWithSummary(parent, childId, "manual fork from TUI", {
+              cwd: process.cwd(),
+              model: cfg.model,
+              provider: "openai-compatible",
+              createdAt: new Date().toISOString(),
+            });
+            child.close();
+            sessionId = parentId;
+            appendMessage("system", `forked ${parentId} -> ${childId}`);
+          } catch (e) {
+            appendMessage("system", `fork failed: ${String(e)}`);
+          } finally {
+            parent.close(); // always balance the open above (cur-115 review #2)
+          }
           return;
         }
         default:
@@ -792,26 +829,22 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
     if (!loop) loop = buildLoop();
 
-    // bind a real tape session on first turn (cur-038 major: /fork and
-    // /tree need a real sessionId, not a timestamp placeholder)
     if (!sessionId) {
+      // bind a real tape session on first turn and hold it: /fork and /tree
+      // need a real sessionId, not a timestamp placeholder (cur-038), and the
+      // held handle is what keeps a second chita out of this session (cur-113)
       sessionId = `sess-${Date.now().toString(36)}`;
-      const tape = Tape.open(process.cwd(), sessionId);
-      tape.appendMeta({
+      activeTape = Tape.open(process.cwd(), sessionId);
+      activeTape.appendMeta({
         sessionId,
         cwd: process.cwd(),
         model: cfg.model,
         provider: "openai-compatible",
         createdAt: new Date().toISOString(),
       });
-      tape.append({ type: "message", role: "user", content: value } as never);
-      tape.close();
-    } else {
-      // append the new user turn to the existing session tape
-      const tape = Tape.open(process.cwd(), sessionId);
-      tape.append({ type: "message", role: "user", content: value } as never);
-      tape.close();
     }
+    // append the user turn through the held handle (one writer per session)
+    activeTape?.append({ type: "message", role: "user", content: value } as never);
     // (assistant + tool events are persisted via tapeAppend in the hooks)
 
     // per-turn AbortController (cur-036: one-shot signal pollutes the loop)
@@ -852,18 +885,23 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   }
 
   /** Resume a session tape into a fresh loop (shared by /resume and startup
-   *  auto-resume; Leo: default should continue the last session). */
-  function resumeSession(id: string): boolean {
+   *  auto-resume; Leo: default should continue the last session). `opened` is
+   *  a handle the caller already holds (startup scan) — never re-acquired, and
+   *  released here if the resume fails (cur-114 review #1). */
+  function adoptSession(id: string, opened?: Tape): boolean {
+    let tape: Tape | null = opened ?? null;
     try {
-      const tape = Tape.open(process.cwd(), id);
+      tape ??= Tape.tryOpen(process.cwd(), id);
+      if (!tape) {
+        appendMessage("system", `${lockedNotice(id, Tape.holderPid(process.cwd(), id))} — not switching`);
+        return false;
+      }
       const events = tape.readAll();
-      tape.close();
       // rebuild the OpenAI message shape (assistant declarations + paired tool
       // results) from the flat event stream: the tape keeps calls and results
       // in append order, which is not conversation order (cur-109/110)
-      const history = historyFromEvents(events);
-      loop = buildLoop();
-      loop.seedConversation(history);
+      const next = buildLoop();
+      next.seedConversation(historyFromEvents(events));
       // restore cumulative usage from persisted snapshots (Leo: restart 0).
       // Snapshots are CUMULATIVE (endStreaming writes running totals), so
       // take the LAST one — summing re-inflates (cur-054 major:
@@ -871,13 +909,24 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       const usage = events
         .filter((e): e is Extract<TraceEvent, { type: "usage" }> => e.type === "usage")
         .pop() ?? { total: 0, input: 0, output: 0 };
-      loop.restoreTokens({ total: usage.total, input: usage.input, output: usage.output });
-      tokensUsed = loop.getTokensUsed(); // TUI copy must match (Leo: resume 0)
+      next.restoreTokens({ total: usage.total, input: usage.input, output: usage.output });
+      if (tape === activeTape) {
+        // adopted the session already held (e.g. /resume landing on it again):
+        // drop the extra ref, or a later /new would leave the lock behind
+        // and keep other chita instances out (cur-115 review #1)
+        tape.close();
+      } else if (activeTape) {
+        activeTape.close(); // release the previous session
+      }
+      activeTape = tape;
+      loop = next;
       sessionId = id;
+      tokensUsed = next.getTokensUsed(); // TUI copy must match (Leo: resume 0)
       setStatus();
       return true;
     } catch (e) {
       appendMessage("system", `resume failed: ${String(e)}`);
+      tape?.close();
       return false;
     }
   }
@@ -936,10 +985,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   // Startup: default = continue the most recent session in this cwd
   // (Leo: opaque ids + manual resume were unfriendly). /new starts fresh.
-  const recent = recentSessionSummary(process.cwd());
+  const recent = openRecentSession(process.cwd(), (id, pid) =>
+    appendMessage("system", `${lockedNotice(id, pid)} — skipped; typing starts a new session`)
+  );
   if (recent) {
     const when = recent.age ? ` (${recent.age})` : "";
-    if (resumeSession(recent.id)) {
+    if (adoptSession(recent.id, recent.tape)) {
       appendMessage("system", `resumed last session ${recent.id}${when} — topic: "${recent.first}"`);
       appendMessage("system", `/new for a fresh session, or keep typing`);
     }
