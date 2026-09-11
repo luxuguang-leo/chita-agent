@@ -230,16 +230,37 @@ export class AgentLoop {
 
   /**
    * seed = restore/inject: sets initial messages (resume from tape, tests).
-   * Validates tool pairing — an orphan tool message is rejected (cur-032).
+   * Validates tool pairing with OpenAI's parallel-tool semantics (cur-109): a
+   * tool message is answered by the nearest preceding assistant that declares
+   * its call id, and consecutive tool messages may share one declaration —
+   * the live loop pushes `assistant(N calls) → tool×N`, so requiring the
+   * *immediately* preceding message to be that assistant would reject the
+   * loop's own shape.
    */
   seedConversation(history: ChatMessage[]): void {
-    const ok = history.every((m, i) => {
-      if (m.role !== "tool") return true;
-      // a tool message needs a preceding assistant message with toolCalls
-      const prev = history[i - 1];
-      return prev?.role === "assistant" && !!prev.toolCalls?.length;
-    });
-    if (!ok) throw new Error("seedConversation: orphan tool message (no matching assistant toolCalls)");
+    let owner: ChatMessage | null = null;
+    const answered = new Set<string>();
+    for (const m of history) {
+      if (m.role === "assistant") {
+        owner = m.toolCalls?.length ? m : null;
+        answered.clear();
+        continue;
+      }
+      if (m.role !== "tool") {
+        owner = null; // any other message closes the declaration window
+        continue;
+      }
+      if (!owner) throw new Error("seedConversation: orphan tool message (no matching assistant toolCalls)");
+      if (m.toolCallId) {
+        if (!owner.toolCalls?.some((c) => c.id === m.toolCallId)) {
+          throw new Error("seedConversation: orphan tool message (no matching assistant toolCalls)");
+        }
+        if (answered.has(m.toolCallId)) {
+          throw new Error(`seedConversation: duplicate tool result for toolCallId ${m.toolCallId}`);
+        }
+        answered.add(m.toolCallId);
+      }
+    }
     this.messages = [...history];
     this.state = "IDLE";
   }

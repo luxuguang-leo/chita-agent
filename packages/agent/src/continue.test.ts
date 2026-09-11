@@ -106,6 +106,44 @@ test("seedConversation: rejects orphan tool message (cur-032)", () => {
     ])
   ).toThrow(/orphan tool/);
 });
+test("seedConversation: accepts the live parallel-tool shape (cur-109)", () => {
+  // The provider declares every call in ONE assistant message and the loop
+  // then pushes one tool message per call, so consecutive tool messages share
+  // one declaration. Requiring the *immediately* preceding message to be that
+  // assistant rejected the loop's own shape — the resume bug this pins.
+  const loop = new AgentLoop({ cwd: "/tmp", provider: new FakeProvider([]) });
+  expect(() =>
+    loop.seedConversation([
+      { role: "user", content: "task" },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          { id: "c1", name: "read", args: "{}" },
+          { id: "c2", name: "bash", args: "{}" },
+        ],
+      },
+      { role: "tool", name: "read", toolCallId: "c1", content: "a" },
+      { role: "tool", name: "bash", toolCallId: "c2", content: "b" },
+    ])
+  ).not.toThrow();
+
+  // ...but an undeclared call id is still an orphan, and one call cannot be
+  // answered twice.
+  expect(() =>
+    loop.seedConversation([
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", args: "{}" }] },
+      { role: "tool", name: "read", toolCallId: "c9", content: "file" },
+    ])
+  ).toThrow(/orphan tool/);
+  expect(() =>
+    loop.seedConversation([
+      { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", args: "{}" }] },
+      { role: "tool", name: "read", toolCallId: "c1", content: "a" },
+      { role: "tool", name: "read", toolCallId: "c1", content: "b" },
+    ])
+  ).toThrow(/duplicate tool result/);
+});
 
 test("resume: restored cumulative tokens > maxTokens still runs (cur-056)", async () => {
   // A resumed session restores CUMULATIVE billing totals via restoreTokens.

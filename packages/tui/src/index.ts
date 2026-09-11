@@ -41,6 +41,7 @@ import { buildSessionTree, forkWithSummary } from "../../session/src/session-tre
 import { Tape, cwdKey, SESSIONS_ROOT } from "../../session/src/tape.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
 import { estimateTokens } from "../../agent/src/context.ts";
+import { historyFromEvents } from "../../agent/src/history.ts";
 
 /** Describe the most recent session in this cwd: id + first user message +
  *  age. Returns null when none. Used for the startup hint and /resume
@@ -558,6 +559,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               : typeof a.pattern === "string" ? a.pattern
               : "";
             lastToolCmd.set(ev.callId ?? ev.tool?.name ?? "", cmd);
+            // persist the declaration so resume can pair results with calls —
+            // without it a tape keeps tool results but no toolCalls (cur-109)
+            tapeAppend({ type: "tool_call", tool: ev.tool, callId: ev.callId });
             // running-tool indicator row (cur-058): spins with the status bar
             // until the tool_result arrives and replaces it
             if (!runningToolLine) {
@@ -852,25 +856,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function resumeSession(id: string): boolean {
     try {
       const tape = Tape.open(process.cwd(), id);
-      const history: { role: string; content: string }[] = [];
       const events = tape.readAll();
       tape.close();
-      // map only complete tool pairs + messages; skip orphan/meta
-      // (cur-038 minor: seedConversation rejects orphan tools)
-      for (const ev of events) {
-        if (ev.type === "message") {
-          // message role is never "tool" (TraceRole excludes it)
-          history.push({ role: ev.role, content: ev.content });
-        } else if (ev.type === "tool_result") {
-          const prev = history[history.length - 1];
-          if (prev && prev.role === "assistant") {
-            history.push({ role: "tool", content: ev.output ?? ev.error ?? "" });
-          }
-          // orphan tool_result without preceding assistant: skip
-        }
-      }
+      // rebuild the OpenAI message shape (assistant declarations + paired tool
+      // results) from the flat event stream: the tape keeps calls and results
+      // in append order, which is not conversation order (cur-109/110)
+      const history = historyFromEvents(events);
       loop = buildLoop();
-      loop.seedConversation(history as never[]);
+      loop.seedConversation(history);
       // restore cumulative usage from persisted snapshots (Leo: restart 0).
       // Snapshots are CUMULATIVE (endStreaming writes running totals), so
       // take the LAST one — summing re-inflates (cur-054 major:
