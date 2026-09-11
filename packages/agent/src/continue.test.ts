@@ -1,5 +1,5 @@
 /**
- * continue/seed API tests (T1 前置, cur-031 blocker / cur-032)
+ * continue/seed API tests (T1 prerequisite, cur-031 blocker / cur-032)
  *
  * - continue: appends a turn WITHOUT resetting messages; history preserved
  * - continue: tool_call/tool pairing stays intact across turns

@@ -1,34 +1,34 @@
-# pi-tui vendor 记录
+# pi-tui vendor notes
 
-本目录为 `earendil-works/pi` 的 `packages/tui` 源码 vendor（TUI 架构设计 §6）。
+This directory vendors `packages/tui` from `earendil-works/pi` (TUI architecture design §6).
 
-## 来源
+## Source
 
-- 仓库：https://github.com/earendil-works/pi
-- 包：`packages/tui`（@earendil-works/pi-tui）
-- **commit：`7bdb16c28d794a5ff8e7485479c8e37eccd9a8d8`**（2026-08-08）
-- 许可：MIT（副本见下方）
+- Repository: https://github.com/earendil-works/pi
+- Package: `packages/tui` (@earendil-works/pi-tui)
+- **commit: `7bdb16c28d794a5ff8e7485479c8e37eccd9a8d8`** (2026-08-08)
+- License: MIT (copy below)
 
-## vendor 内容
+## Vendored contents
 
-- `src/` → 37 个 .ts 文件（纯 JS 核心，排除 `native-modifiers.ts`）
-- **排除**：`native/`（darwin/win32 原生 .node 修饰键检测）——降级为常规按键检测，功能不受影响（设计 §6 决策）
-- 依赖：`get-east-asian-width` / `marked`（chita workspace 已有）
+- `src/` → 37 .ts files (plain-JS core; `native-modifiers.ts` excluded)
+- **Excluded**: `native/` (darwin/win32 native .node modifier-key detection) — degraded to regular key detection, no functional impact (design §6 decision)
+- Dependencies: `get-east-asian-width` / `marked` (already present in the chita workspace)
 
-## 供应链 pinning
+## Supply-chain pinning
 
-- commit + hash 记录于本文件（不可变来源）
-- `SessionMeta.pinnedResources` 记录 vendor 版本（v2.1 N2 机制）
-- 升级流程：更新 source commit → 重新 vendor → 更新本文件 → 更新 pinnedResources
+- commit + hash recorded in this file (immutable source)
+- `SessionMeta.pinnedResources` records the vendor version (v2.1 N2 mechanism)
+- Upgrade flow: update source commit → re-vendor → update this file → update pinnedResources
 
-## 修改记录
+## Modification log
 
-| 日期 | 修改 |
+| Date | Change |
 |---|---|
-| 2026-08-09 | vendor 初始拷贝；terminal.ts 移除 native-modifiers import（Shift+Enter native 检测降级为 false） |
+| 2026-08-09 | initial vendor copy; terminal.ts drops the native-modifiers import (native Shift+Enter detection degraded to false) |
 
 
-## LICENSE（MIT，来自 pi repo）
+## LICENSE (MIT, from the pi repo)
 
 MIT License
 
@@ -51,4 +51,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-| 2026-08-09 | components/editor.ts：newLine 分支移除裸 `\n` 兜底——配合 TUI setKeybindings 覆盖，Enter 提交、Shift+Enter 换行（chita 设计 §8） |
+| 2026-08-09 | components/editor.ts: the newLine branch drops the bare `\n` fallback — with the TUI's setKeybindings override, Enter submits and Shift+Enter inserts a newline (chita design §8) |

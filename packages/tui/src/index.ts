@@ -339,7 +339,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // cur-056: if the provider never ran this turn (deadlock/error before the
     // first streamed token), there is nothing new to persist — writing the
     // stale last-assistant message + unchanged usage here is what polluted
-    // the stuck session's tape with repeated "让我再看几个关键 references…".
+    // the stuck session's tape with repeated
+    // "让我再看几个关键 references…" / "let me check a few more key references…".
     if (!streamedThisTurn) {
       streamingText = null;
       streamingBuffer = "";
@@ -942,7 +943,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // Running: first press cancels the turn AND arms exit — the next press
     // (within 2s) exits unconditionally. Previously ctrlCPressed was reset
     // here, so a second Ctrl+C while still running re-cancelled forever
-    // (Leo: 'Ctrl+C 无法退出' during a turn).
+    // (user report: 'Ctrl+C cannot exit' during a turn).
     if (running && cancelCurrent && !ctrlCPressed) {
       // M-next WAITING_USER: cancel also resolves a pending approval as deny —
       // otherwise the loop would sit on the 5-min timeout after a Ctrl+C.
@@ -977,8 +978,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   tui.start();
 
-  // Startup banner (Leo: missing in TUI) — plain Text, NOT Markdown: the
-  // ASCII art (\\ _ | `) would be mangled by the md parser (Leo: 显示混乱).
+  // Startup banner (user report: missing in the TUI) — plain Text, NOT Markdown:
+  // the ASCII art (\\ _ | `) would be mangled by the md parser (rendered as garbage).
   const bannerText = new Text(renderBanner({ version: VERSION, model: cfg.model, cwd: process.cwd() }), 1, 0);
   messagesBox.addChild(bannerText);
   trimMessages();

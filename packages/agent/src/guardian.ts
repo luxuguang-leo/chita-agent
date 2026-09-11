@@ -13,7 +13,7 @@
  * to the write TOOL's `path` arg, `echo/tee` to absolute paths in bash, and
  * write/bash `path` args — NOT generic shell redirection (`cat x > ../out`,
  * `cp a /tmp/b`, `python -c 'open("/etc/...")'`). Those need sandbox-level
- * enforcement (缓做, OS sandbox), not a regex table.
+ * enforcement (deferred, OS sandbox), not a regex table.
  * Known gaps (cur-097): `echo foo 2>&1 > /etc/passwd` (the `&` cuts the
  * match) and `printf`/`dd` variants are not caught — documented, not fixed
  * in MVP.

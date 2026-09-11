@@ -47,7 +47,7 @@ export interface FailedApproach {
 }
 
 /** TaskResult contract schema version. Placeholder: single harness, no
- *  cross-session CAS promotion yet — cur-096 says "stateVersion 先占位" (P1-1). */
+ *  cross-session CAS promotion yet — cur-096 says "stateVersion is a placeholder" (P1-1). */
 export const TASK_RESULT_STATE_VERSION = 1;
 
 export interface TaskResult {

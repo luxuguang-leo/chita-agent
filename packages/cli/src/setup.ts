@@ -29,7 +29,7 @@ export const PROVIDERS: ProviderChoice[] = [
 export async function runSetup(): Promise<{ ok: boolean; message: string }> {
   // Ensure the terminal cursor is visible — a hidden cursor (e.g. left over
   // from a previous fullscreen app) makes the input position invisible
-  // (Leo: "没有提示光标输入，看不到以为没有输入位置").
+  // (user report: "no visible input cursor — looked like there was nowhere to type").
   process.stdout.write("\x1b[?25h");
 
   // bun's stream/readline stdin events are unreliable for piped input;
@@ -135,7 +135,7 @@ export async function runSetup(): Promise<{ ok: boolean; message: string }> {
   };
 
   // Reuse existing provider/model from config.json if present — don't re-ask
-  // what's already configured (Leo: "再进入还要我提示选模型和 API key").
+  // what's already configured (user report: "re-entering still asks me to pick a model and API key").
   // Only the API key is strictly required each time.
   const existing = loadConfig();
   const hasModel = existing.model && existing.model !== "deepseek-chat"; // default = unconfigured

@@ -4,7 +4,7 @@
  * Sessions form a tree via parentId. fork() creates a child that inherits
  * the parent's tape prefix; branch_summary records WHY the branch was taken
  * and what happened there, so leaving the branch can bring conclusions back
- * to the mainline (Pi: "总结成上下文再带回主线").
+ * to the mainline (Pi: "summarize into context and carry it back to the mainline").
  *
  * Layout: ~/.chita/agent/sessions/--<cwd>/*.jsonl (tape) + tree metadata in
  * each tape's __meta header.
@@ -112,7 +112,7 @@ export function buildSessionTree(cwd: string, root = SESSIONS_ROOT): SessionNode
 }
 
 /**
- * Record the conclusion of a branch back to its parent (Pi: "分支总结带回主线").
+ * Record the conclusion of a branch back to its parent (Pi: "carry the branch summary back to the mainline").
  * Appends a system message with the branch summary to the PARENT's tape.
  */
 export function mergeBranchBack(cwd: string, childId: string, parentId: string, conclusion: string, root = SESSIONS_ROOT): void {
