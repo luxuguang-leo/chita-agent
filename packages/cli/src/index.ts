@@ -16,7 +16,7 @@ import { scrubSecrets } from "@chita/agent/src/scrub.ts";
 import { runJudge } from "@chita/agent/src/judge.ts";
 import { printBanner } from "./banner.ts";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";
 
 function printVersion(): void {
   printBanner({ version: VERSION }, { short: true });
