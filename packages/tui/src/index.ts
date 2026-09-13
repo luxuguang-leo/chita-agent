@@ -907,6 +907,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       running = false;
       cancelCurrent = null;
       stopSpinner();
+      // Hardening (review): a cancel can race a provider-side failure, so trust
+      // the abort signal itself, not only the CANCELLED/AbortError classification.
+      if (turnCancel.signal.aborted) cancelled = true;
       if (pendingInputs.length > 0) {
         if (cancelled) {
           const n = restorePendingInputs();
