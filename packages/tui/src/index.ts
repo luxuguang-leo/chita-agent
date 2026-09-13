@@ -7,6 +7,8 @@
  * cur-033 fixes:
  * - assistant streaming rendered via onAssistantMessage hook
  * - Ctrl+C cancels current turn (AbortController via loop signal)
+ * - Esc cancels too; a cancel returns queued follow-ups to the editor
+ *   (pi/Codex parity) instead of firing them at the rejected context
  * - onSubmit re-entrancy lock (no stacked runs on rapid Enter)
  * - /mode rebuilds the loop with the new mode
  */
@@ -37,11 +39,13 @@ import {
   setKeybindings,
   TUI_KEYBINDINGS,
 } from "../vendor/keybindings.ts";
+import { matchesKey } from "../vendor/keys.ts";
 import { buildSessionTree, forkWithSummary } from "../../session/src/session-tree.ts";
 import { Tape, cwdKey, SESSIONS_ROOT } from "../../session/src/tape.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
 import { estimateTokens } from "../../agent/src/context.ts";
 import { historyFromEvents } from "../../agent/src/history.ts";
+import { mergeQueuedIntoDraft } from "./queue.ts";
 
 /** Describe the most recent session in this cwd: id + first user message +
  *  age. Returns null when none. Used for the startup hint and /resume
@@ -668,11 +672,25 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // record non-slash task prompts in editor history (↑↓ navigation)
     if (!value.startsWith("/")) input.addToHistory(value);
     if (running) {
-      // FIFO queue for replay after the current turn (don't drop input)
+      // FIFO queue: normal turn end drains it; Esc/Ctrl+C return it to the
+      // editor instead (pi/Codex). Never drop input.
       pendingInputs.push(value);
       return;
     }
     await handleTurn(value);
+  }
+
+  /** Take queued follow-ups back into the editor (pi/Codex "take back what you
+   *  queued"): merge them with the current draft, oldest first, separated by
+   *  blank lines, so the user can edit/reorder before re-submitting. Returns
+   *  how many were returned. */
+  function restorePendingInputs(): number {
+    const queued = pendingInputs;
+    pendingInputs = [];
+    if (queued.length === 0) return 0;
+    input.setText(mergeQueuedIntoDraft(queued, input.getText()));
+    tui.requestRender();
+    return queued.length;
   }
 
   /** The actual turn handler (slash or model task). */
@@ -865,10 +883,15 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     streamedThisTurn = false; // reset per-turn (cur-056)
     streamingBuffer = ""; // defensive: never carry over from a prior turn
 
+    // Set when the turn was aborted (Esc/Ctrl+C). An aborted turn must NOT
+    // fire the queued follow-ups at the context the user just rejected; the
+    // queue is returned to the editor instead. Normal completion drains it.
+    let cancelled = false;
     try {
       const result = await loop.continue(value); // multi-turn
       tokensUsed = loop.getTokensUsed(); // real usage from provider (cur-045)
       if (result.state === "CANCELLED") {
+        cancelled = true;
         appendMessage("system", "cancelled");
       } else if (result.state === "ERROR" && result.error) {
         appendMessage("system", `error: ${result.error.slice(0, 160)}`);
@@ -876,17 +899,23 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       // summary already streamed via onAssistantMessage; no duplicate append
       // (cur-036 minor: streamed text vs summary could double-show)
     } catch (e) {
-      const msg = e instanceof Error && e.name === "AbortError" ? "cancelled" : String(e);
-      appendMessage("system", msg);
+      const aborted = e instanceof Error && e.name === "AbortError";
+      if (aborted) cancelled = true;
+      appendMessage("system", aborted ? "cancelled" : String(e));
     } finally {
       endStreaming();
       running = false;
       cancelCurrent = null;
       stopSpinner();
-      // replay inputs queued while this turn was running (FIFO)
       if (pendingInputs.length > 0) {
-        const next = pendingInputs.shift()!;
-        void handleTurn(next);
+        if (cancelled) {
+          const n = restorePendingInputs();
+          appendMessage("system", `↩ ${n} queued message${n > 1 ? "s" : ""} returned to input`);
+        } else {
+          // normal end: drain the FIFO one message per turn
+          const next = pendingInputs.shift()!;
+          void handleTurn(next);
+        }
       }
     }
   }
@@ -945,21 +974,28 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // SIGINT signal (some terminals/PTYs deliver Ctrl+C as a signal even in
   // raw mode; Leo: neither worked). Shared handler keeps semantics identical.
   let ctrlCPressed = false;
+  /** Abort the running turn and deny a pending approval. Shared by Ctrl+C and
+   *  Esc so both cancel identically; the queue is returned to the editor by
+   *  handleTurn's finally. Returns false when nothing is cancellable. */
+  const cancelTurn = (): boolean => {
+    if (!running || !cancelCurrent) return false;
+    // M-next WAITING_USER: cancel also resolves a pending approval as deny —
+    // otherwise the loop would sit on the 5-min timeout after a cancel.
+    if (approvalWaiter) {
+      const w = approvalWaiter;
+      approvalWaiter = null;
+      appendMessage("system", `✗ cancelled ${w.toolName} approval`);
+      w.resolve(false);
+    }
+    cancelCurrent();
+    return true;
+  };
   const handleCtrlC = () => {
     // Running: first press cancels the turn AND arms exit — the next press
     // (within 2s) exits unconditionally. Previously ctrlCPressed was reset
     // here, so a second Ctrl+C while still running re-cancelled forever
     // (user report: 'Ctrl+C cannot exit' during a turn).
-    if (running && cancelCurrent && !ctrlCPressed) {
-      // M-next WAITING_USER: cancel also resolves a pending approval as deny —
-      // otherwise the loop would sit on the 5-min timeout after a Ctrl+C.
-      if (approvalWaiter) {
-        const w = approvalWaiter;
-        approvalWaiter = null;
-        appendMessage("system", `✗ cancelled ${w.toolName} approval`);
-        w.resolve(false);
-      }
-      cancelCurrent();
+    if (!ctrlCPressed && cancelTurn()) {
       ctrlCPressed = true;
       setTimeout(() => (ctrlCPressed = false), 2000);
       return;
@@ -977,6 +1013,18 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   tui.addInputListener((data) => {
     if (data === "\u0003" || KITTY_CTRL_C.test(data)) {
       handleCtrlC();
+      return { consume: true };
+    }
+    // Esc = cancel the running turn (pi/Codex). Don't steal it while the
+    // autocomplete menu is open — there the editor uses Esc to close the menu.
+    if (running && cancelCurrent && !input.isShowingAutocomplete() && matchesKey(data, "escape")) {
+      cancelTurn();
+      return { consume: true };
+    }
+    // Alt+Up = take back the queue without cancelling (Codex edit_queued_message)
+    if (running && pendingInputs.length > 0 && matchesKey(data, "alt+up")) {
+      const n = restorePendingInputs();
+      appendMessage("system", `↩ ${n} queued message${n > 1 ? "s" : ""} returned to input`);
       return { consume: true };
     }
   });
