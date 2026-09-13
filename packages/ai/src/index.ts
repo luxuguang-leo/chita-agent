@@ -20,25 +20,33 @@ export interface ProviderConfig {
   maxTokens?: number;
 }
 
-/** Per-model max output (completion) tokens, mirroring pi's model catalog
- *  (deepseek-v4-* = 384K output on a 1M context). chita used to hard-code 4096
- *  for every model, which truncates long tool-call arguments and long answers. */
+/** Per-model max output (completion) tokens, mirroring pi's model catalog.
+ *  Values are read off `@earendil-works/pi-ai/dist/providers/data/moonshotai.json`
+ *  (and the CN mirror) rather than guessed. chita used to hard-code 4096 for
+ *  every model, which truncates long tool-call arguments and long answers; the
+ *  Kimi entry keyed on /^moonshot/ was dead, because every Moonshot model id in
+ *  that catalog is `kimi-*`. */
 const MODEL_MAX_TOKENS: Array<[RegExp, number]> = [
-  [/^deepseek/, 384_000],
-  [/^moonshot/, 8_192],
+  [/^deepseek/, 384_000], // deepseek-v4-* = 384K output on a 1M context
+  [/^kimi-k2-0711/, 16_384], // kimi-k2-0711-preview
+  [/^kimi-k3/, 131_072], // kimi-k3 (1M context)
+  [/^kimi/, 262_144], // kimi-k2.5 / k2.6 / k2.7-code / k2-0905 / k2-thinking / k2-turbo
   [/^glm-/, 8_192],
   [/^qwen/, 8_192],
   [/^claude/, 8_192],
   [/^gpt-4/, 16_384],
 ];
 
-/** Infer the max output tokens from the model name; conservative 4096 fallback
- *  for models chita has no entry for. */
-export function inferMaxTokens(model: string): number {
+/** Infer the max output tokens from the model name; `undefined` for models
+ *  chita has no entry for — the caller then omits `max_tokens` from the
+ *  request and lets the endpoint apply its own default, the way pi does
+ *  (openai-completions.js writes params.max_tokens only when options.maxTokens
+ *  is set). */
+export function inferMaxTokens(model: string): number | undefined {
   for (const [re, n] of MODEL_MAX_TOKENS) {
     if (re.test(model)) return n;
   }
-  return 4096;
+  return undefined;
 }
 
 export interface OpenAIStreamChunk {
@@ -90,12 +98,16 @@ export class OpenAICompatibleProvider {
    * Yields: message (assistant text), tool_call, done, usage.
    */
   async *chat(messages: ChatMessage[], opts?: { signal?: AbortSignal; tools?: ChatTool[] }): AsyncIterable<StreamEvent> {
+    // pi parity: only send max_tokens when a cap is actually known (explicit
+    // config, or a model chita has a catalog entry for). An unknown model omits
+    // the field entirely so the endpoint picks its own default.
+    const maxTokens = this.cfg.maxTokens ?? inferMaxTokens(this.cfg.model);
     const body: Record<string, unknown> = {
       model: this.cfg.model,
       messages: toOpenAIMessages(messages),
       stream: true,
-      max_tokens: this.cfg.maxTokens ?? inferMaxTokens(this.cfg.model),
     };
+    if (maxTokens !== undefined) body.max_tokens = maxTokens;
     // Tools as OpenAI function-calling format (DeepSeek/Kimi/GLM/Ollama all support it)
     if (opts?.tools && opts.tools.length > 0) {
       body.tools = opts.tools.map((t) => ({
