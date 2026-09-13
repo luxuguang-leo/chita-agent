@@ -16,8 +16,29 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
-  /** Max tokens per response */
+  /** Max tokens per response (overrides the per-model inference) */
   maxTokens?: number;
+}
+
+/** Per-model max output (completion) tokens, mirroring pi's model catalog
+ *  (deepseek-v4-* = 384K output on a 1M context). chita used to hard-code 4096
+ *  for every model, which truncates long tool-call arguments and long answers. */
+const MODEL_MAX_TOKENS: Array<[RegExp, number]> = [
+  [/^deepseek/, 384_000],
+  [/^moonshot/, 8_192],
+  [/^glm-/, 8_192],
+  [/^qwen/, 8_192],
+  [/^claude/, 8_192],
+  [/^gpt-4/, 16_384],
+];
+
+/** Infer the max output tokens from the model name; conservative 4096 fallback
+ *  for models chita has no entry for. */
+export function inferMaxTokens(model: string): number {
+  for (const [re, n] of MODEL_MAX_TOKENS) {
+    if (re.test(model)) return n;
+  }
+  return 4096;
 }
 
 export interface OpenAIStreamChunk {
@@ -73,7 +94,7 @@ export class OpenAICompatibleProvider {
       model: this.cfg.model,
       messages: toOpenAIMessages(messages),
       stream: true,
-      max_tokens: this.cfg.maxTokens ?? 4096,
+      max_tokens: this.cfg.maxTokens ?? inferMaxTokens(this.cfg.model),
     };
     // Tools as OpenAI function-calling format (DeepSeek/Kimi/GLM/Ollama all support it)
     if (opts?.tools && opts.tools.length > 0) {
