@@ -64,7 +64,7 @@ export function classifyError(status: number | undefined, message: string): Clas
   if (m.includes("overflow") || m.includes("context length") || m.includes("token limit")) {
     return { category: "overflow", retryable: true, reason: "context overflow — compact then retry" };
   }
-  if (m.includes("timeout") || m.includes("timed out") || m.includes("econnreset") || m.includes("socket hang") || m.includes("connection refused") || m.includes("network")) {
+  if (m.includes("timeout") || m.includes("timed out") || m.includes("econnreset") || m.includes("socket hang") || m.includes("connection refused") || m.includes("network") || m.includes("fetch failed") || m.includes("failed to fetch") || m.includes("econnrefused") || m.includes("enotfound") || m.includes("etimedout") || m.includes("undici") || m.includes("eai_again")) {
     return { category: "timeout", retryable: true, reason: "timeout/network", backoffMs: 1500 };
   }
   if (m.includes("malformed") || m.includes("invalid json") || m.includes("schema") || m.includes("arguments")) {
@@ -88,4 +88,27 @@ export function backoffDelay(attempt: number, policy: RetryPolicy = DEFAULT_POLI
 export function shouldRetry(err: ClassifiedError, attempt: number, policy: RetryPolicy = DEFAULT_POLICY): boolean {
   if (!err.retryable) return false;
   return attempt < policy.maxRetries;
+}
+
+/**
+ * Human-facing error text. Raw provider/network failures ("fetch failed",
+ * undici socket errors) get an actionable hint instead of the bare message;
+ * unknown messages pass through unchanged. CLI/TUI call this before printing
+ * `outcome.error`.
+ */
+export function friendlyError(message: string): string {
+  const m = message.toLowerCase();
+  if (/fetch failed|failed to fetch|econnrefused|enotfound|econnreset|etimedout|socket hang|connection refused|network|undici|eai_again|dns/.test(m)) {
+    return `网络错误：连不上 API（DeepSeek）。请检查网络/代理后重试；若反复出现，检查代理端口是否在监听。(${message})`;
+  }
+  if (/401|unauthorized|invalid api key|authentication|api key/.test(m)) {
+    return `API key 无效或已过期，请检查 ~/.chita/.env 后重试。(${message})`;
+  }
+  if (/429|rate limit/.test(m)) {
+    return `触发限流（429），稍后重试。(${message})`;
+  }
+  if (/\b5\d\d\b|server error|bad gateway|gateway timeout/.test(m)) {
+    return `服务端错误，稍后重试。(${message})`;
+  }
+  return message;
 }

@@ -27,6 +27,8 @@ import { Editor, type EditorTheme } from "../vendor/components/editor.ts";
 import { CombinedAutocompleteProvider, type SlashCommand } from "../vendor/autocomplete.ts";
 import type { SelectListTheme } from "../vendor/components/select-list.ts";
 import { AgentLoop } from "../../agent/src/loop.ts";
+import { categoryLabel, type GuardianCategory } from "../../agent/src/guardian.ts";
+import { friendlyError } from "../../agent/src/errors.ts";
 import { runJudge } from "../../agent/src/judge.ts";
 import { JudgeBudget } from "../../agent/src/judge.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
@@ -409,7 +411,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const st = loop?.state ?? "THINKING";
     if (st === "TOOL_CALL") return runningToolName ? `running ${runningToolName}` : "running tool";
     if (st === "OBSERVING") return "reading result";
-    if (st === "WAITING_USER") return "awaiting approval";
+    if (st === "WAITING_USER") return "awaiting approval · type allow/deny";
     return "thinking";
   }
 
@@ -498,8 +500,15 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             : typeof args.path === "string" ? args.path
             : typeof args.pattern === "string" ? args.pattern
             : "";
-          appendMessage("system", `⏸ guardian[${toolName}]: ${reason}`);
-          appendMessage("system", `   ${cmd.slice(0, 100) || "(no args)"} — allow / deny`);
+          // reason looks like "guardian[credential]: reading credential-bearing
+          // file". Split it so the user sees the WHAT (Chinese category) and
+          // WHY (rule hint) plus an explicit how-to-answer line.
+          const m = reason.match(/^guardian\[(\w+)\]:\s*(.*)$/);
+          const label = m ? categoryLabel(m[1] as GuardianCategory) : "风险操作";
+          const why = m ? m[2] : reason;
+          appendMessage("system", `⏸ 需要授权【${label}】${why}`);
+          appendMessage("system", `   命令: ${cmd.slice(0, 140) || "(无参数)"}`);
+          appendMessage("system", `   → 回复 allow 放行 / deny 拒绝（5 分钟不回复 = 拒绝）`);
           return new Promise<boolean>((resolve) => {
             let settled = false;
             const finish = (allow: boolean) => {
@@ -894,14 +903,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         cancelled = true;
         appendMessage("system", "cancelled");
       } else if (result.state === "ERROR" && result.error) {
-        appendMessage("system", `error: ${result.error.slice(0, 160)}`);
+        appendMessage("system", `error: ${friendlyError(result.error).slice(0, 160)}`);
       }
       // summary already streamed via onAssistantMessage; no duplicate append
       // (cur-036 minor: streamed text vs summary could double-show)
     } catch (e) {
       const aborted = e instanceof Error && e.name === "AbortError";
       if (aborted) cancelled = true;
-      appendMessage("system", aborted ? "cancelled" : String(e));
+      appendMessage("system", aborted ? "cancelled" : friendlyError(String(e)));
     } finally {
       endStreaming();
       running = false;

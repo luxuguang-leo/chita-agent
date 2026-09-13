@@ -11,6 +11,7 @@
 
 import { loadConfig, initConfig, apiKey, CONFIG_PATH, budgetTokensFor } from "./config.ts";
 import { AgentLoop } from "@chita/agent/src/loop.ts";
+import { friendlyError } from "@chita/agent/src/errors.ts";
 import { OpenAICompatibleProvider } from "@chita/ai/src/index.ts";
 import { scrubSecrets } from "@chita/agent/src/scrub.ts";
 import { runJudge } from "@chita/agent/src/judge.ts";
@@ -84,7 +85,7 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
   const outcome = await loop.run(task);
   console.log(`\n[chita] state: ${outcome.state}${outcome.summary ? ` | ${outcome.summary}` : ""}`);
   if (outcome.error) {
-    console.error(`\n[chita] error: ${outcome.error.slice(0, 300)}`);
+    console.error(`\n[chita] error: ${friendlyError(outcome.error).slice(0, 300)}`);
     // key problems deserve a direct, actionable hint (user report: "a wrong key must surface its own error")
     if (/401|invalid api key|authentication|unauthorized/i.test(outcome.error)) {
       console.error("-> your API key looks invalid/expired. Fix it and retry:");

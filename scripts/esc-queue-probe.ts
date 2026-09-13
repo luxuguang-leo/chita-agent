@@ -38,6 +38,9 @@ check(src.includes('matchesKey(data, "alt+up")'), "Alt+Up is wired to take the q
 check(src.includes("!input.isShowingAutocomplete()"), "Esc defers to an open autocomplete menu");
 check(src.includes("restorePendingInputs()"), "queued inputs are restored to the editor");
 check(src.includes("void handleTurn(next)"), "normal completion still drains the queue");
+check(src.includes("categoryLabel("), "guardian approval shows the Chinese risk category");
+check(src.includes("回复 allow"), "approval prompt tells the user to answer allow/deny");
+check(src.includes("friendlyError("), "turn errors are rendered through friendlyError");
 
 console.log(failures === 0 ? "\nPROBE OK" : `\nPROBE FAIL (${failures})`);
 process.exit(failures === 0 ? 0 : 1);

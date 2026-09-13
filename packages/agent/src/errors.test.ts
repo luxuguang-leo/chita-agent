@@ -6,7 +6,7 @@
  */
 
 import { test, expect } from "bun:test";
-import { classifyError, backoffDelay, shouldRetry, RetryPolicy } from "./errors.ts";
+import { classifyError, backoffDelay, shouldRetry, RetryPolicy, friendlyError } from "./errors.ts";
 
 test("4xx client errors are not retryable", () => {
   const e = classifyError(401, "invalid api key");
@@ -66,4 +66,27 @@ test("unclassified errors default to non-retryable", () => {
   const e = classifyError(undefined, "something weird happened");
   expect(e.category).toBe("other");
   expect(e.retryable).toBe(false);
+});
+
+test("undici fetch failed is classified as retryable network/timeout", () => {
+  const e = classifyError(undefined, "fetch failed");
+  expect(e.category).toBe("timeout");
+  expect(e.retryable).toBe(true);
+});
+
+test("friendlyError maps fetch failed to an actionable network hint", () => {
+  const s = friendlyError("fetch failed");
+  expect(s).toContain("网络错误");
+  expect(s).toContain("代理");
+  expect(s).toContain("fetch failed"); // original preserved for debugging
+});
+
+test("friendlyError maps 401 to an api-key hint", () => {
+  const s = friendlyError("401 invalid api key");
+  expect(s).toContain("API key");
+  expect(s).toContain(".env");
+});
+
+test("friendlyError passes unknown messages through unchanged", () => {
+  expect(friendlyError("something weird happened")).toBe("something weird happened");
 });
