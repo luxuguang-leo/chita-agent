@@ -286,7 +286,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
       trimMessages();
     }
-    tui.requestRender(true);
+    // requestRender() (NOT force): force resets the render state, which makes
+    // TuiMainScreen emit a clearing full redraw (\x1b[2J\x1b[3J) of the whole
+    // growing history — the "screen flooding" bug. Differential rendering is
+    // enough here (Box/Markdown invalidate their own caches).
+    tui.requestRender();
   }
 
   /** Window the message area: drop oldest rows past MAX_VISIBLE (cur-042
@@ -330,7 +334,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       streamingText.setText(`**assistant** ${streamingBuffer}`);
     }
     trimMessages();
-    tui.requestRender(true);
+    tui.requestRender(); // differential: update the streamed row in place
   }
 
   function endStreaming(): void {
@@ -391,7 +395,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       `session: ${sid} | mode: ${mode} | model: ${cfg.model} | ` +
         `↑${fmtTokens(tokensUsed.input)} ↓${fmtTokens(tokensUsed.output)} | ctx ${fmtTokens(cur)}/${fmtTokens(ctx)} (${pct}%)${suffix}`
     );
-    tui.requestRender(true);
+    // spinner ticks call this every 120 ms — must stay differential, or the
+    // whole screen + scrollback is cleared and reprinted 8x/second
+    tui.requestRender();
   }
 
   /** Map loop state -> status label (cur-058: tells the user WHAT is slow). */
@@ -454,7 +460,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     }
     spinnerLabel = "";
     spinnerTrackState = true;
-    tui.requestRender(true);
+    tui.requestRender();
   }
 
   /** Loop-side approval timeout (ms). Single source of truth shared by the
@@ -596,7 +602,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               runningToolLine = new Markdown(`[${runningToolName}] ⠋ ${runningToolCmd}`, 0, 0, mdTheme, { color: brightWhite });
               toolBox.addChild(runningToolLine);
               trimTools();
-              tui.requestRender(true);
+              tui.requestRender();
             }
             return;
           }
