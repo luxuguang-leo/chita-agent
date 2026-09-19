@@ -48,6 +48,7 @@ import type { TraceEvent } from "../../session/src/trace.ts";
 import { estimateTokens } from "../../agent/src/context.ts";
 import { historyFromEvents } from "../../agent/src/history.ts";
 import { mergeQueuedIntoDraft } from "./queue.ts";
+import { isBannerCmd, formatApprovalCommand } from "./display.ts";
 
 /** Describe the most recent session in this cwd: id + first user message +
  *  age. Returns null when none. Used for the startup hint and /resume
@@ -507,7 +508,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           const label = m ? categoryLabel(m[1] as GuardianCategory) : "风险操作";
           const why = m ? m[2] : reason;
           appendMessage("system", `⏸ 需要授权【${label}】${why}`);
-          appendMessage("system", `   命令: ${cmd.slice(0, 140) || "(无参数)"}`);
+          appendMessage("system", `   命令: ${formatApprovalCommand(cmd)}`);
           appendMessage("system", `   → 回复 allow 放行 / deny 拒绝（5 分钟不回复 = 拒绝）`);
           return new Promise<boolean>((resolve) => {
             let settled = false;
@@ -518,10 +519,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               resolve(allow);
             };
             approvalWaiter = { resolve: finish, toolName, reason };
-            // align with the loop-side timeout (same constant): expire the
-            // waiter too, so a stale input line falls through to the model
-            // instead of being swallowed as a decision (F3)
-            setTimeout(() => finish(false), APPROVAL_TIMEOUT_MS);
+            // No waiter-side timeout: the loop owns the approval timeout
+            // (Promise.race in runTool). A duplicate 5-min timer here fired
+            // first and resolved the decision as `false`, so a genuine timeout
+            // was mislabeled "denied by user". The waiter is cleared when the
+            // loop emits the tool_result (timeout or not) instead.
           });
         },
         afterToolCall: (_n, result) => {
@@ -573,12 +575,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     return pick.slice(0, 60) + suffix;
   }
 
-  /** True when the command is a decorative echo banner (echo "=== xxx ===",
-   *  echo ---, echo "-----") — folded out of the tool feed (Leo: flood). */
-  function isBannerCmd(cmd: string): boolean {
-    return /^echo\s+["']?={2,}/.test(cmd) || /^echo\s+["']?-{2,}/.test(cmd) || /^echo\s*$/.test(cmd);
-  }
-
   /** Minimal tool line (omp style): command + first meaningful argument —
    *  'curl -s https://api…' -> 'curl https://api…'; 'ls -lat ~/x/' ->
    *  'ls ~/x/'; line count only when >3 lines. Full command/output via
@@ -620,6 +616,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             return;
           }
           if (ev.type === "tool_result") {
+            // M-next WAITING_USER: a pending approval resolves to a tool_result
+            // (allow executed, deny/timeout recorded). Resolve the waiter as
+            // deny — finish() has a settled guard, so it is a no-op when the
+            // user already answered — which also clears it so a later input
+            // line is NOT swallowed as a stale decision (F3).
+            if (approvalWaiter && approvalWaiter.toolName === ev.toolName) {
+              approvalWaiter.resolve(false);
+            }
             // the running indicator row is replaced by the result row (cur-058)
             if (runningToolLine) {
               if (toolBox.children.includes(runningToolLine)) toolBox.removeChild(runningToolLine);

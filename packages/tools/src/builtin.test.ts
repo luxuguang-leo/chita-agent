@@ -103,3 +103,30 @@ test("bash tool: non-aborted signal runs normally", async () => {
   );
   expect(result.ok).toBe(true);
 });
+
+test("bash tool: timeout reports a clear error and keeps partial stdout out of error", async () => {
+  // 2026-09-19 session: a compound `echo "===" ; curl …` killed at the tool's
+  // timeout dumped partial stdout into error -> "error: … api.github.com -> 200".
+  const registry = makeRegistry();
+  const result = await registry.execute(
+    "bash",
+    { command: 'echo "=== start ===" ; sleep 5', timeoutMs: 300 },
+    { cwd: "/tmp", permission: "allow" }
+  );
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("timed out after 300ms");
+  expect(result.error).not.toContain("=== start ===");
+  expect(result.output).toContain("=== start ===");
+});
+
+test("bash tool: non-zero exit keeps stderr in error (not a timeout)", async () => {
+  const registry = makeRegistry();
+  const result = await registry.execute(
+    "bash",
+    { command: "echo boom >&2 ; exit 1" },
+    { cwd: "/tmp", permission: "allow" }
+  );
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("boom");
+  expect(result.error).not.toContain("timed out");
+});

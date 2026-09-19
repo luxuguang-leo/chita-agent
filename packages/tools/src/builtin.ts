@@ -54,7 +54,7 @@ export const writeTool: Tool = {
 
 export const bashTool: Tool = {
   name: "bash",
-  description: "Run a shell command (timeout + output truncation).",
+  description: "Run a shell command (default 60s timeout — pass timeoutMs to raise for long downloads/network calls; output is truncated).",
   parameters: {
     type: "object",
     properties: { command: { type: "string" }, timeoutMs: { type: "number" } },
@@ -65,7 +65,7 @@ export const bashTool: Tool = {
     // NOTE: runs in ctx.cwd directly. A temporary sandbox dir (isolated tmp
     // workspace) is a M1.5 item — v2.1 §2.3 (Cursor F7).
     const command = String(args.command ?? "");
-    const timeoutMs = Number(args.timeoutMs ?? 10000);
+    const timeoutMs = Number(args.timeoutMs ?? 60000);
     if (!command) return { ok: false, error: "command required" };
     // abort check before execution (T2; mid-command interrupt needs async
     // spawn, T3)
@@ -81,10 +81,34 @@ export const bashTool: Tool = {
       const { output, truncated } = truncateOutput(out);
       return { ok: true, output, truncated };
     } catch (e: unknown) {
-      const err = e as { stdout?: string; stderr?: string; message?: string; status?: number };
-      const detail = (err.stdout ?? "") + (err.stderr ?? "");
+      const err = e as {
+        stdout?: string | Buffer;
+        stderr?: string | Buffer;
+        message?: string;
+        status?: number | null;
+        code?: string;
+      };
+      const stdout = err.stdout != null ? String(err.stdout) : "";
+      const stderr = err.stderr != null ? String(err.stderr) : "";
+      // Timeout vs non-zero exit: a killed-by-timeout execSync carries code
+      // ETIMEDOUT and a null status. Its partial stdout is PROGRESS, not the
+      // error — a compound `echo "===" ; curl …` killed mid-run used to read
+      // "error: === … api.github.com -> 200", hiding the real reason.
+      const timedOut =
+        err.code === "ETIMEDOUT" ||
+        (err.status == null && /ETIMEDOUT|timed out/i.test(err.message ?? ""));
+      if (timedOut) {
+        const partial = truncateOutput(stdout || stderr);
+        return {
+          ok: false,
+          output: partial.output || undefined,
+          truncated: partial.truncated,
+          error: `command timed out after ${timeoutMs}ms — raise the timeoutMs arg if this run needs longer (curl/wget --max-time won't help: the tool kills first)`,
+        };
+      }
+      const detail = stdout + stderr;
       const { output, truncated } = truncateOutput(detail || err.message || "command failed");
-      return { ok: false, error: output, truncated, verificationHint: "re-run command with --max-time to verify" };
+      return { ok: false, error: output, truncated, verificationHint: "command exited non-zero — inspect the output above" };
     }
   },
 };
