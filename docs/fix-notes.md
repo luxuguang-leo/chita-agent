@@ -9,6 +9,35 @@ reserved for major features.
 
 ---
 
+## 2026-09-19 — four session-surfaced UI/tool bugs (banner fold, approval truncation, bash timeout)
+
+`2f291d8` · review `her-048 → her-049` · reviewer **Cursor** (approve)
+
+- **Symptom**: one session (cline/plugins jev-browser research) surfaced four
+  defects: (1) the approval prompt cut a command at 140 chars mid-word (a
+  multi-line `rm -rf … ; curl --max-time …` showed as `curl -s --ma`); (2) an
+  `echo "=== title ===" ; curl …` folded into `[bash] ×1 banner lines`, hiding
+  the decoded result; (3) the bash 10s timeout killed commands before curl's
+  `--max-time 15/25/30`, then dumped the partial stdout (`… -> 200`) into
+  `error`; (4) a 5-min approval timeout read "denied by user".
+- **Root cause**: fixed 140-byte slice; `isBannerCmd` matched only the echo
+  prefix; bash defaulted `timeoutMs` to 10000 and concatenated stdout+stderr
+  into `error`; the TUI's own 5-min timer fired before the loop's
+  `Promise.race` timeout and resolved the decision as plain `false`, making the
+  loop's `timedOut` branch dead code.
+- **Change**: `formatApprovalCommand` collapses to one line and caps at 1000
+  chars with an explicit `… (truncated N chars)`; `isBannerCmd` folds only a
+  pure echo (any `;|&\n` means real work) — moved to `tui/src/display.ts`;
+  bash default timeout raised to 60s, the description names the `timeoutMs`
+  arg, a timeout reports `command timed out after Nms` and keeps partial
+  stdout in `output`; the TUI timeout timer is removed and the `tool_result`
+  handler resolves any pending waiter as deny (`finish` has a `settled` guard),
+  so timeouts are now labeled "approval timed out".
+- **Evidence**: `bun test` 232 pass / 0 fail, `tsc` clean, `bun run build` OK;
+  new tests cover banner fold/non-fold (incl. the quote-semicolon tradeoff),
+  approval-command truncation, bash timeout error separation, and the
+  non-zero-exit stderr path.
+
 ## 2026-09-12 — one session, two writers (duplicate turns)
 
 `22a873b` · review `cur-113 → cur-116`
