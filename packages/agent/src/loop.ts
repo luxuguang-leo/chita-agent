@@ -74,6 +74,9 @@ export interface LoopHooks {
     toolName: string,
     result: { ok: boolean; output?: string; error?: string }
   ): { ok: boolean; output?: string; error?: string } | void;
+  /** Live tool output chunk (async tool execution, T3). UI-only, ephemeral —
+   *  NEVER persisted/replayed. TUI renders a tail window; --print ignores. */
+  onToolOutput?(chunk: { toolName: string; callId?: string; chunk: string }): void;
   /** Called after each completed turn (for trace recording) */
   onEvent?(event: TraceEvent): void;
   /** Called on every streamed assistant message (UI/trace) */
@@ -502,7 +505,16 @@ export class AgentLoop {
     args: Record<string, unknown>,
     callId?: string
   ): Promise<{ ok: boolean; output?: string; error?: string }> {
-    const ctx: ToolContext = { cwd: this.opts.cwd, permission: "ask", signal: this.opts.signal };
+    const ctx: ToolContext = {
+      cwd: this.opts.cwd,
+      permission: "ask",
+      signal: this.opts.signal,
+      // T3 async tool execution: pipe live stdout chunks to the UI channel.
+      // Ephemeral — the tape only records the final tool_result.
+      onOutput: (chunk) => {
+        this.opts.hooks?.onToolOutput?.({ toolName: name, callId, chunk });
+      },
+    };
     // Read-only tools default allow; ask stays ask for the hook to decide
     const tool = this.tools.get(name);
     if (tool) ctx.permission = tool.defaultPermission;

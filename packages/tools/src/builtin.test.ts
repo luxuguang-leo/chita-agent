@@ -130,3 +130,37 @@ test("bash tool: non-zero exit keeps stderr in error (not a timeout)", async () 
   expect(result.error).toContain("boom");
   expect(result.error).not.toContain("timed out");
 });
+
+test("bash tool: streams stdout chunks via ctx.onOutput (T3 async spawn)", async () => {
+  const registry = makeRegistry();
+  const chunks: string[] = [];
+  const result = await registry.execute(
+    "bash",
+    { command: "for i in 1 2 3; do echo $i; sleep 0.05; done" },
+    { cwd: "/tmp", permission: "allow", onOutput: (c) => chunks.push(c) }
+  );
+  expect(result.ok).toBe(true);
+  // live chunks arrived (not a single post-hoc dump)
+  expect(chunks.length).toBeGreaterThan(0);
+  const live = chunks.join("");
+  expect(live).toContain("1");
+  expect(live).toContain("3");
+  // final result still carries the full (truncated-to-4096) output
+  expect(result.output).toContain("1");
+});
+
+test("bash tool: mid-run abort kills the process group and returns interrupted", async () => {
+  const registry = makeRegistry();
+  const abort = new AbortController();
+  const p = registry.execute(
+    "bash",
+    { command: "sleep 60" },
+    { cwd: "/tmp", permission: "allow", signal: abort.signal }
+  );
+  // abort well into the run; resolution only happens on close (process dead),
+  // so a flake-free assertion of the kill
+  setTimeout(() => abort.abort(), 200);
+  const result = await p;
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("interrupted");
+});

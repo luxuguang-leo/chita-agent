@@ -6,7 +6,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { execSync, execFileSync } from "node:child_process";
+import { execSync, execFileSync, spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { Tool, ToolContext, ToolResult, truncateOutput } from "./index.ts";
 
@@ -61,57 +61,141 @@ export const bashTool: Tool = {
     required: ["command"],
   },
   defaultPermission: "ask",
-  execute(args, ctx: ToolContext): ToolResult {
+  async execute(args, ctx: ToolContext): Promise<ToolResult> {
     // NOTE: runs in ctx.cwd directly. A temporary sandbox dir (isolated tmp
     // workspace) is a M1.5 item — v2.1 §2.3 (Cursor F7).
     const command = String(args.command ?? "");
     const timeoutMs = Number(args.timeoutMs ?? 60000);
     if (!command) return { ok: false, error: "command required" };
-    // abort check before execution (T2; mid-command interrupt needs async
-    // spawn, T3)
+    // abort check before execution (T2); mid-command interrupt is handled by
+    // runShell's process-group kill (async spawn, T3)
     if (ctx.signal?.aborted) return { ok: false, error: "aborted before execution" };
-    try {
-      const out = execSync(command, {
-        cwd: ctx.cwd,
-        timeout: timeoutMs,
-        encoding: "utf-8",
-        shell: "/bin/bash",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const { output, truncated } = truncateOutput(out);
-      return { ok: true, output, truncated };
-    } catch (e: unknown) {
-      const err = e as {
-        stdout?: string | Buffer;
-        stderr?: string | Buffer;
-        message?: string;
-        status?: number | null;
-        code?: string;
-      };
-      const stdout = err.stdout != null ? String(err.stdout) : "";
-      const stderr = err.stderr != null ? String(err.stderr) : "";
-      // Timeout vs non-zero exit: a killed-by-timeout execSync carries code
-      // ETIMEDOUT and a null status. Its partial stdout is PROGRESS, not the
-      // error — a compound `echo "===" ; curl …` killed mid-run used to read
-      // "error: === … api.github.com -> 200", hiding the real reason.
-      const timedOut =
-        err.code === "ETIMEDOUT" ||
-        (err.status == null && /ETIMEDOUT|timed out/i.test(err.message ?? ""));
-      if (timedOut) {
+    return runShell(command, {
+      cwd: ctx.cwd,
+      timeoutMs,
+      signal: ctx.signal,
+      onOutput: ctx.onOutput,
+    });
+  },
+};
+
+/** Bounded tail for live stdout/stderr accumulation (aligns execSync's
+ *  default maxBuffer; cursor Q6 — key is "bounded", never unbounded +=). */
+const MAX_BUF = 1024 * 1024;
+/** SIGTERM → grace → SIGKILL so stubborn children can't survive (cursor #1). */
+const KILL_GRACE_MS = 300;
+
+/**
+ * Run a shell command via async spawn (T3: replaces the execSync that froze
+ * the TUI event loop). Streams stdout chunks through onOutput for live UI;
+ * preserves execSync's four result shapes (see builtin.test.ts contract).
+ */
+function runShell(
+  command: string,
+  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal; onOutput?: (chunk: string) => void }
+): Promise<ToolResult> {
+  return new Promise((resolve) => {
+    const child = spawn("/bin/bash", ["-c", command], {
+      cwd: opts.cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32", // own process group for group-kill
+    });
+    const stdoutDec = new TextDecoder("utf-8");
+    const stderrDec = new TextDecoder("utf-8");
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    let killed = false;
+
+    const append = (text: string, to: "stdout" | "stderr"): void => {
+      if (!text) return; // decoder flush may yield "" — skip empty chunks (nit)
+      if (to === "stdout") {
+        stdout += text;
+        if (stdout.length > MAX_BUF) stdout = stdout.slice(stdout.length - MAX_BUF);
+        opts.onOutput?.(text);
+      } else {
+        stderr += text;
+        if (stderr.length > MAX_BUF) stderr = stderr.slice(stderr.length - MAX_BUF);
+      }
+    };
+
+    let timer: ReturnType<typeof setTimeout>;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (r: ToolResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(graceTimer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      resolve(r);
+    };
+
+    const killGroup = (sig: NodeJS.Signals): void => {
+      try {
+        if (process.platform !== "win32" && child.pid != null) process.kill(-child.pid, sig);
+        else child.kill(sig);
+      } catch {
+        // already dead
+      }
+    };
+
+    const onAbort = (): void => {
+      if (settled) return;
+      killed = true;
+      killGroup("SIGTERM");
+      // grace, then SIGKILL (cursor finding #1) — finish happens on close
+      graceTimer = setTimeout(() => killGroup("SIGKILL"), KILL_GRACE_MS);
+    };
+    opts.signal?.addEventListener("abort", onAbort);
+
+    timer = setTimeout(() => {
+      timedOut = true;
+      killGroup("SIGKILL");
+    }, opts.timeoutMs);
+
+    child.stdout.on("data", (b: Buffer) => append(stdoutDec.decode(b, { stream: true }), "stdout"));
+    child.stderr.on("data", (b: Buffer) => append(stderrDec.decode(b, { stream: true }), "stderr"));
+    child.on("error", (e) => finish({ ok: false, error: String(e) }));
+    child.on("close", (code) => {
+      // flush decoder tails (cursor finding #3): a chunk ending mid-code-point
+      // would otherwise drop the final partial character
+      try {
+        append(stdoutDec.decode(), "stdout");
+      } catch {
+        // decoder already flushed
+      }
+      try {
+        append(stderrDec.decode(), "stderr");
+      } catch {
+        // decoder already flushed
+      }
+      if (killed) {
+        // explicit interrupt outranks timeout when both fire in the same frame
+        const partial = truncateOutput(stdout);
+        finish({ ok: false, output: partial.output || undefined, truncated: partial.truncated, error: "interrupted" });
+      } else if (timedOut) {
+        // Timeout vs non-zero exit: partial stdout is PROGRESS, not the error
+        // (a compound `echo "===" ; curl …` killed mid-run must not read
+        // "error: === … -> 200").
         const partial = truncateOutput(stdout || stderr);
-        return {
+        finish({
           ok: false,
           output: partial.output || undefined,
           truncated: partial.truncated,
-          error: `command timed out after ${timeoutMs}ms — raise the timeoutMs arg if this run needs longer (curl/wget --max-time won't help: the tool kills first)`,
-        };
+          error: `command timed out after ${opts.timeoutMs}ms — raise the timeoutMs arg if this run needs longer (curl/wget --max-time won't help: the tool kills first)`,
+        });
+      } else if (code !== 0) {
+        const detail = truncateOutput(stdout + stderr || "command failed");
+        finish({ ok: false, error: detail.output, truncated: detail.truncated, verificationHint: "command exited non-zero — inspect the output above" });
+      } else {
+        const out = truncateOutput(stdout);
+        finish({ ok: true, output: out.output, truncated: out.truncated });
       }
-      const detail = stdout + stderr;
-      const { output, truncated } = truncateOutput(detail || err.message || "command failed");
-      return { ok: false, error: output, truncated, verificationHint: "command exited non-zero — inspect the output above" };
-    }
-  },
-};
+    });
+  });
+}
 
 export const grepTool: Tool = {
   name: "grep",

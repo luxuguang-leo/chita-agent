@@ -102,6 +102,28 @@ test("tool call executes through registry with permission hook", async () => {
   expect(toolCalls.length).toBeGreaterThan(0);
 });
 
+test("onToolOutput fires for a streaming bash tool (T3 async execution)", async () => {
+  const script: StreamEvent[][] = [
+    [{ kind: "tool_call", toolName: "bash", args: { command: "echo hello ; echo world" } }],
+    [{ kind: "done", summary: "echoed" }],
+  ];
+  const outputs: { toolName: string; callId?: string; chunk: string }[] = [];
+  const loop = new AgentLoop({
+    cwd: "/tmp",
+    provider: new FakeProvider(() => script),
+    autoApproveAsk: true,
+    hooks: {
+      onToolOutput: (c) => outputs.push(c),
+    },
+  });
+  const result = await loop.run("echo hello");
+  expect(result.state).toBe("DONE");
+  // live stdout chunks reached the hook (not persisted — TraceEvent untouched)
+  expect(outputs.length).toBeGreaterThan(0);
+  expect(outputs.every((o) => o.toolName === "bash")).toBe(true);
+  expect(outputs.map((o) => o.chunk).join("")).toContain("hello");
+});
+
 test("maxIterations cap stops runaway loop", async () => {
   const script: StreamEvent[][] = [[{ kind: "message", message: { role: "assistant", content: "never done" } }]];
   const loop = new AgentLoop({

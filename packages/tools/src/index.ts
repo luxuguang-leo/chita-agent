@@ -20,6 +20,9 @@ export interface ToolContext {
   sandbox?: { id: string };
   /** Abort signal (user interrupt / budget cap) */
   signal?: AbortSignal;
+  /** Stream live output chunks as they arrive (bash only; ignored by other
+   *  tools). UI-only, ephemeral — never persisted to the tape. */
+  onOutput?(chunk: string): void;
 }
 
 export interface ToolResult {
