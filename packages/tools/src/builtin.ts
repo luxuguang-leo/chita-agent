@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { Tool, ToolContext, ToolResult, truncateOutput } from "./index.ts";
+import { sanitizeTail } from "./sanitize.ts";
 
 export const readTool: Tool = {
   name: "read",
@@ -99,6 +100,8 @@ type ExitShape = (r: {
   stderr: string;
   killed: boolean;
   timedOut: boolean;
+  /** stdout was a binary dump (detectBinary) — git show <blob> etc. */
+  binary: boolean;
 }) => ToolResult;
 
 /**
@@ -109,7 +112,14 @@ type ExitShape = (r: {
  */
 export function spawnToResult(
   argv: string[],
-  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal; onOutput?: (chunk: string) => void },
+  opts: {
+    cwd: string;
+    timeoutMs: number;
+    signal?: AbortSignal;
+    onOutput?: (chunk: string) => void;
+    /** Stop early + mark binary when a stdout chunk contains NUL (P2.1). */
+    detectBinary?: boolean;
+  },
   shape: ExitShape
 ): Promise<ToolResult> {
   return new Promise((resolve) => {
@@ -125,10 +135,20 @@ export function spawnToResult(
     let settled = false;
     let timedOut = false;
     let killed = false;
+    let binary = false;
 
     const append = (text: string, to: "stdout" | "stderr"): void => {
       if (!text) return; // decoder flush may yield "" — skip empty chunks
       if (to === "stdout") {
+        // P2.1 binary detection: a NUL in stdout means a binary dump (git show
+        // <blob>). Kill early + stop buffering instead of pumping a large blob
+        // into the 1MB tail (cursor P2.1: first-chunk trigger, any NUL).
+        if (opts.detectBinary && text.includes("\0")) {
+          binary = true;
+          killGroup("SIGKILL");
+          return;
+        }
+        if (binary) return; // already binary — drop the rest
         stdout += text;
         if (stdout.length > MAX_BUF) stdout = stdout.slice(stdout.length - MAX_BUF);
         opts.onOutput?.(text);
@@ -190,7 +210,7 @@ export function spawnToResult(
       } catch {
         // decoder already flushed
       }
-      finish(shape({ code, stdout, stderr, killed, timedOut }));
+      finish(shape({ code, stdout, stderr, killed, timedOut, binary }));
     });
   });
 }
@@ -240,6 +260,21 @@ export function shellToolShape(
       return { ok: false, output: partial.output || undefined, truncated: partial.truncated, error: `command timed out after ${timeoutMs}ms` };
     }
     return onExit(r.code, r.stdout, r.stderr);
+  };
+}
+
+/** git's exit shaping: binary detection first (show <blob> dumps raw bytes),
+ *  then shellToolShape's exit mapping with ANSI stripped from stdout (P2.1). */
+function gitShape(timeoutMs: number): ExitShape {
+  const base = shellToolShape(timeoutMs, (code, stdout, stderr) => {
+    if (code !== 0) return { ok: false, error: stderr || "git failed" };
+    const out = truncateOutput(sanitizeTail(stdout));
+    return { ok: true, output: out.output, truncated: out.truncated };
+  });
+  return (r) => {
+    if (r.killed) return { ok: false, error: "interrupted" }; // explicit interrupt outranks binary
+    if (r.binary) return { ok: true, output: "(binary file)" };
+    return base(r);
   };
 }
 
@@ -363,12 +398,8 @@ export const gitTool: Tool = {
     const argv = tokenizeArgs(sub);
     return spawnToResult(
       ["git", ...argv],
-      { cwd: ctx.cwd, timeoutMs: GIT_TIMEOUT_MS, signal: ctx.signal, onOutput: ctx.onOutput },
-      shellToolShape(GIT_TIMEOUT_MS, (code, stdout, stderr) => {
-        if (code !== 0) return { ok: false, error: stderr || "git failed" };
-        const out = truncateOutput(stdout);
-        return { ok: true, output: out.output, truncated: out.truncated };
-      })
+      { cwd: ctx.cwd, timeoutMs: GIT_TIMEOUT_MS, signal: ctx.signal, onOutput: ctx.onOutput, detectBinary: true },
+      gitShape(GIT_TIMEOUT_MS)
     );
   },
 };

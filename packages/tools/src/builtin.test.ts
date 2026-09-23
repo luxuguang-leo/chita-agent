@@ -243,6 +243,40 @@ test("git: async status streams stdout via ctx.onOutput", async () => {
   expect(chunks.length).toBeGreaterThan(0);
 });
 
+test("git: show of a binary blob returns '(binary file)' (P2.1 detectBinary)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "chita-git-bin-"));
+  execSync("git init -q", { cwd: repo });
+  execSync('git config user.email "t@t.local" && git config user.name t', { cwd: repo });
+  writeFileSync(join(repo, "blob.bin"), Buffer.from([0, 1, 2, 3, 0, 255]));
+  execSync("git add -A && git commit -qm init", { cwd: repo });
+
+  const registry = makeRegistry();
+  const result = await registry.execute(
+    "git",
+    { args: "show HEAD:blob.bin" },
+    { cwd: repo, permission: "allow" }
+  );
+  expect(result.ok).toBe(true);
+  expect(result.output).toBe("(binary file)");
+});
+
+test("git: log --color=always output is ANSI-cleaned (P2.1 sanitizeTail)", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "chita-git-"));
+  execSync("git init -q", { cwd: repo });
+  writeFileSync(join(repo, "a.txt"), "x");
+  execSync('git config user.email "t@t.local" && git config user.name t && git add -A && git commit -qm init', { cwd: repo });
+
+  const registry = makeRegistry();
+  const result = await registry.execute(
+    "git",
+    { args: "log --oneline --color=always" },
+    { cwd: repo, permission: "allow" }
+  );
+  expect(result.ok).toBe(true);
+  expect(result.output).toContain("init");
+  expect(result.output).not.toContain("\x1b[");
+});
+
 test("shellToolShape: timeout keeps partial stdout out of error (grep/git parity)", async () => {
   const result = await spawnToResult(
     ["/bin/bash", "-c", "echo progress; sleep 60"],

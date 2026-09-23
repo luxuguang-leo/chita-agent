@@ -5,6 +5,9 @@
  * (they were previously nested inside the onEvent closure).
  */
 
+import { sanitizeTail } from "../../tools/src/sanitize.ts";
+export { sanitizeTail };
+
 /**
  * True when the command is a PURE decorative echo banner — `echo "===…"`,
  * `echo ---`, or a bare `echo` — and nothing else. Any statement separator
@@ -38,12 +41,6 @@ export function formatApprovalCommand(cmd: string): string {
   const cut = head.lastIndexOf(" ");
   const shown = cut > MAX / 2 ? head.slice(0, cut) : head;
   return `${shown}… (truncated ${collapsed.length - shown.length} chars)`;
-}
-
-/** Strip ANSI CSI control sequences + bare CR so a live tail renders clean
- *  (P1 streaming: raw chunks can carry colors/cursor moves/\r progress). */
-export function sanitizeTail(text: string): string {
-  return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\r/g, "");
 }
 
 /** Append a sanitized stdout chunk to a tail buffer, capped to the last
