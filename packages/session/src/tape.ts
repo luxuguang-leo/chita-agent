@@ -280,6 +280,18 @@ export class Tape {
 }
 
 /**
+ * Pid of a LIVE process holding this session's lock, or null when the session
+ * is free (no lock file, or a stale lock left by a crash). Lock-free read used
+ * by the resume picker: listing sessions must never take a lock itself.
+ */
+export function liveHolderPid(cwd: string, sessionId: string, root = SESSIONS_ROOT): number | null {
+  const lockPath = tapePaths(cwd, sessionId, root).tape + ".lock";
+  if (!existsSync(lockPath)) return null;
+  if (isStaleLock(lockPath)) return null;
+  return Tape.holderPid(cwd, sessionId, root);
+}
+
+/**
  * Stale lock detection: a lock file is stale when its pid is not alive.
  * Crash leaves a lock file behind; the next open takes it over (Cursor F5).
  */

@@ -15,6 +15,7 @@ import { friendlyError } from "@chita/agent/src/errors.ts";
 import { OpenAICompatibleProvider } from "@chita/ai/src/index.ts";
 import { scrubSecrets } from "@chita/agent/src/scrub.ts";
 import { runJudge } from "@chita/agent/src/judge.ts";
+import { listRecentSessions, formatAge, readSessionMeta } from "../../session/src/session-tree.ts";
 import { printBanner } from "./banner.ts";
 
 export const VERSION = "0.1.3";
@@ -122,6 +123,43 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
   }
 }
 
+/** chita --resume [id]: with an id, resume directly; without, list + pick. */
+async function runResume(id?: string): Promise<void> {
+  const { startTui } = await import("@chita/tui/src/index.ts");
+
+  if (id) {
+    if (!readSessionMeta(process.cwd(), id)) {
+      console.error(`session ${id} not found in this directory`);
+      process.exitCode = 1;
+      return;
+    }
+    await startTui({ resumeId: id });
+    return;
+  }
+
+  const sessions = listRecentSessions(process.cwd());
+  if (sessions.length === 0) {
+    console.log("no sessions in this directory — run `chita` first");
+    return;
+  }
+
+  const { pickSession } = await import("./picker.ts");
+  const entries = sessions.map((s) => ({
+    id: s.sessionId,
+    topic: s.topic || "(no topic)",
+    age: formatAge(s.lastActiveAt),
+    locked: s.locked,
+  }));
+  const picked = await pickSession(entries);
+  if (!picked) {
+    if (!process.stdin.isTTY) {
+      console.log("\nnon-interactive: pick one with `chita --resume <id>`");
+    }
+    return;
+  }
+  await startTui({ resumeId: picked });
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
 
@@ -146,7 +184,7 @@ async function main(): Promise<void> {
         '  chita "task"             run a task (--print mode)',
         '  chita --plan "task"      read-only analysis (plan mode)',
         "  chita --judge \"task\"     run task + /goal judge verification",
-        "  chita --resume           resume session (M2+)",
+        "  chita --resume [id]      list + pick a session to resume (TUI)",
         "",
         "Env: CHITA_API_KEY required for running tasks",
       ].join("\n")
@@ -171,7 +209,7 @@ async function main(): Promise<void> {
     }
   }
   if (args[0] === "--resume") {
-    console.log("[chita] --resume lands in M2+");
+    await runResume(args[1]);
     return;
   }
   if (args[0] === "--plan") {

@@ -42,7 +42,7 @@ import {
   TUI_KEYBINDINGS,
 } from "../vendor/keybindings.ts";
 import { matchesKey } from "../vendor/keys.ts";
-import { buildSessionTree, forkWithSummary } from "../../session/src/session-tree.ts";
+import { buildSessionTree, forkWithSummary, summarizeTopic, readSessionMeta } from "../../session/src/session-tree.ts";
 import { Tape, cwdKey, SESSIONS_ROOT } from "../../session/src/tape.ts";
 import type { TraceEvent } from "../../session/src/trace.ts";
 import { estimateTokens } from "../../agent/src/context.ts";
@@ -114,6 +114,9 @@ function ageLabel(iso: string): string {
 
 export interface TuiOptions {
   judge?: boolean;
+  /** Resume this specific session at startup instead of the most recent
+   *  (chita --resume <id>). */
+  resumeId?: string;
 }
 
 export async function startTui(opts: TuiOptions = {}): Promise<void> {
@@ -910,6 +913,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
         model: cfg.model,
         provider: "openai-compatible",
         createdAt: new Date().toISOString(),
+        // first user message = the session topic (for the resume picker)
+        topic: summarizeTopic(value),
       });
     }
     // append the user turn through the held handle (one writer per session)
@@ -974,6 +979,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function adoptSession(id: string, opened?: Tape): boolean {
     let tape: Tape | null = opened ?? null;
     try {
+      // A missing session must never be silently created: Tape.tryOpen opens
+      // with "a+", which would write an empty tape and pollute the picker.
+      // Guard existence before opening (cursor finding #1); `opened` (startup
+      // scan) is already known to exist.
+      if (!tape && !readSessionMeta(process.cwd(), id)) {
+        appendMessage("system", `session ${id} not found`);
+        return false;
+      }
       tape ??= Tape.tryOpen(process.cwd(), id);
       if (!tape) {
         appendMessage("system", `${lockedNotice(id, Tape.holderPid(process.cwd(), id))} — not switching`);
@@ -1085,16 +1098,24 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   messagesBox.addChild(bannerText);
   trimMessages();
 
-  // Startup: default = continue the most recent session in this cwd
-  // (Leo: opaque ids + manual resume were unfriendly). /new starts fresh.
-  const recent = openRecentSession(process.cwd(), (id, pid) =>
-    appendMessage("system", `${lockedNotice(id, pid)} — skipped; typing starts a new session`)
-  );
-  if (recent) {
-    const when = recent.age ? ` (${recent.age})` : "";
-    if (adoptSession(recent.id, recent.tape)) {
-      appendMessage("system", `resumed last session ${recent.id}${when} — topic: "${recent.first}"`);
-      appendMessage("system", `/new for a fresh session, or keep typing`);
+  // Startup: chita --resume <id> resumes a SPECIFIC session; otherwise the
+  // default continues the most recent session in this cwd (Leo: opaque ids +
+  // manual resume were unfriendly). /new starts fresh.
+  if (opts.resumeId) {
+    // adopt directly — on failure (locked/missing) stay on a fresh session and
+    // say so; do NOT silently fall back to the most-recent (cursor finding #2).
+    const ok = adoptSession(opts.resumeId);
+    if (!ok) appendMessage("system", `could not resume ${opts.resumeId} — starting a fresh session (/new to reset)`);
+  } else {
+    const recent = openRecentSession(process.cwd(), (id, pid) =>
+      appendMessage("system", `${lockedNotice(id, pid)} — skipped; typing starts a new session`)
+    );
+    if (recent) {
+      const when = recent.age ? ` (${recent.age})` : "";
+      if (adoptSession(recent.id, recent.tape)) {
+        appendMessage("system", `resumed last session ${recent.id}${when} — topic: "${recent.first}"`);
+        appendMessage("system", `/new for a fresh session, or keep typing`);
+      }
     }
   }
 }

@@ -10,9 +10,9 @@
  * each tape's __meta header.
  */
 
-import { existsSync, readdirSync, readFileSync, openSync, writeSync, closeSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, openSync, writeSync, closeSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { tapePaths, cwdKey, SESSIONS_ROOT, Tape } from "./tape.ts";
+import { tapePaths, cwdKey, SESSIONS_ROOT, Tape, liveHolderPid } from "./tape.ts";
 import type { SessionMeta } from "./trace.ts";
 
 export interface BranchInfo {
@@ -126,4 +126,95 @@ export function mergeBranchBack(cwd: string, childId: string, parentId: string, 
   const fd = openSync(tape, "a");
   writeSync(fd, line + "\n");
   closeSync(fd);
+}
+
+/** Collapse whitespace + truncate to a one-line topic. Empty when the text is
+ *  blank or a slash command (a `/help`/`/new` first line is not a topic —
+ *  cursor finding #3). */
+export function summarizeTopic(text: string, max = 60): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t || t.startsWith("/")) return "";
+  return t.length > max ? t.slice(0, max) + "…" : t;
+}
+
+/** First real user message (not a slash command) in a tape — lazy fallback
+ *  for legacy sessions without a persisted topic. Reads line-by-line and
+ *  stops at the first match (never the whole tape). */
+function firstUserMessage(cwd: string, sessionId: string, root = SESSIONS_ROOT): string {
+  const { tape } = tapePaths(cwd, sessionId, root);
+  if (!existsSync(tape)) return "";
+  try {
+    for (const line of readFileSync(tape, "utf-8").split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line) as { __meta?: unknown; type?: string; role?: string; content?: string };
+        if (obj.__meta) continue;
+        if (obj.type === "message" && obj.role === "user") {
+          const t = summarizeTopic(obj.content ?? "");
+          if (t) return t;
+        }
+      } catch {
+        // skip malformed line
+      }
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+/** One-line topic for a session (for listing): meta.topic → branchSummary →
+ *  first real user message (legacy fallback). */
+export function sessionTopic(cwd: string, sessionId: string, root = SESSIONS_ROOT): string {
+  const meta = readSessionMeta(cwd, sessionId, root);
+  if (meta?.topic) return meta.topic;
+  if (meta?.branchSummary) return meta.branchSummary;
+  return firstUserMessage(cwd, sessionId, root);
+}
+
+export interface SessionEntry {
+  sessionId: string;
+  topic: string;
+  createdAt?: string;
+  /** Tape mtime (last activity) as ISO — drives the picker sort. */
+  lastActiveAt?: string;
+  /** True when another live chita holds the session lock. */
+  locked: boolean;
+}
+
+/** Sessions for a cwd, newest-activity first, with topic + lock status. */
+export function listRecentSessions(cwd: string, limit = 20, root = SESSIONS_ROOT): SessionEntry[] {
+  const dir = join(root, cwdKey(cwd));
+  if (!existsSync(dir)) return [];
+  const entries: SessionEntry[] = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".jsonl")) continue;
+    const sessionId = f.slice(0, -".jsonl".length);
+    const { tape } = tapePaths(cwd, sessionId, root);
+    let lastActiveAt: string | undefined;
+    try {
+      lastActiveAt = new Date(statSync(tape).mtimeMs).toISOString();
+    } catch {
+      // unreadable tape — skip
+    }
+    entries.push({
+      sessionId,
+      topic: sessionTopic(cwd, sessionId, root),
+      createdAt: readSessionMeta(cwd, sessionId, root)?.createdAt,
+      lastActiveAt,
+      locked: liveHolderPid(cwd, sessionId, root) !== null,
+    });
+  }
+  entries.sort((a, b) => (b.lastActiveAt ?? "").localeCompare(a.lastActiveAt ?? ""));
+  return entries.slice(0, limit);
+}
+
+/** Human age label for a timestamp (shared by the TUI + the CLI picker). */
+export function formatAge(iso?: string): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return "just now";
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
 }

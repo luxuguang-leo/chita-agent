@@ -175,6 +175,8 @@ export interface SessionMeta {
   parentId?: string;
   /** Why this branch was taken / what was explored (v2.1 §2.7) */
   branchSummary?: string;
+  /** One-line topic for session listing (first user message, truncated). */
+  topic?: string;
   /** Pinned resource references (MCP/Skills, v2.1 N2) */
   pinnedResources?: PinningStub[];
 }
