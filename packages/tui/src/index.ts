@@ -48,7 +48,7 @@ import type { TraceEvent } from "../../session/src/trace.ts";
 import { estimateTokens } from "../../agent/src/context.ts";
 import { historyFromEvents } from "../../agent/src/history.ts";
 import { mergeQueuedIntoDraft } from "./queue.ts";
-import { isBannerCmd, formatApprovalCommand } from "./display.ts";
+import { isBannerCmd, formatApprovalCommand, tailWindow } from "./display.ts";
 
 /** Describe the most recent session in this cwd: id + first user message +
  *  age. Returns null when none. Used for the startup hint and /resume
@@ -229,6 +229,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // --- cur-058 spinner state (waiting indicator) ---
   const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
   const SPINNER_INTERVAL_MS = 120;
+  /** Live stdout tail line cap for the running-tool row (P1 streaming). */
+  const MAX_TAIL_LINES = 8;
+  /** Total char cap for the live tail (cursor finding #1: a single huge line
+   *  must not bloat the 120ms setText). */
+  const MAX_TAIL_CHARS = 4096;
   let spinnerTimer: ReturnType<typeof setInterval> | null = null;
   let spinnerFrame = 0;
   let spinnerLabel = "";
@@ -241,6 +246,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   /** Real tool name for the running indicator + status label (cur-058 review:
    *  not every tool is bash — read/write/git show their own name). */
   let runningToolName = "";
+  /** Live stdout tail for the running-tool row (P1 streaming): capped to the
+   *  last MAX_TAIL_LINES lines, ANSI-sanitized. Filled by onToolOutput,
+   *  rendered by the 120ms spinner tick — never requestRender'd directly. */
+  let runningTailBuf = "";
   // TUI-level judge budget singleton (cur-040 major: per-invocation instance
   // reset the max-3-per-session counter every /goal)
   const judgeBudget = new JudgeBudget({});
@@ -325,6 +334,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           runningToolLine = null;
           runningToolCmd = "";
           runningToolName = "";
+          runningTailBuf = "";
         }
         toolBox.removeChild(oldest);
       }
@@ -416,6 +426,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     return "thinking";
   }
 
+  /** Append a live stdout chunk to the running-tool tail (P1 streaming).
+   *  Capped to the last MAX_TAIL_LINES lines; the 120ms spinner tick renders
+   *  it — this never calls requestRender (finding #6 throttle). */
+  function pushTail(chunk: string): void {
+    runningTailBuf = tailWindow(runningTailBuf, chunk, MAX_TAIL_LINES, MAX_TAIL_CHARS);
+  }
+
   /** Refresh the animated status bar + running-tool row (one tick). */
   function updateActivity(): void {
     if (!spinnerTimer) return;
@@ -433,7 +450,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
     setStatus(` | ${frame} ${spinnerLabel} (${elapsed}s)`);
     if (runningToolLine) {
-      runningToolLine.setText(`[${runningToolName}] ${frame} ${runningToolCmd}`);
+      // P1 streaming: rebuild the row as `[name] ⠋ cmd` + the live tail so the
+      // 120ms spinner tick doesn't overwrite streamed stdout (finding #2)
+      const tail = runningTailBuf ? `\n${runningTailBuf}` : "";
+      runningToolLine.setText(`[${runningToolName}] ${frame} ${runningToolCmd}${tail}`);
     }
   }
 
@@ -465,6 +485,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       runningToolCmd = "";
       runningToolName = "";
     }
+    runningTailBuf = "";
     spinnerLabel = "";
     spinnerTrackState = true;
     tui.requestRender();
@@ -530,6 +551,15 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           if (result.output) {
             const scrubbed = scrubSecrets(result.output);
             return { ok: result.ok, output: scrubbed.text, redacted: scrubbed.redacted };
+          }
+        },
+        // P1 live output: pipe streamed stdout into the running-tool row's
+        // tail. Throttled — only writes the buffer; the 120ms spinner tick
+        // (updateActivity) does the actual render (finding #6). Never
+        // persisted: the tape records only the final tool_result.
+        onToolOutput: (chunk) => {
+          if (runningToolLine && chunk.toolName === runningToolName) {
+            pushTail(chunk.chunk);
           }
         },
         // streaming assistant text rendered live (cur-033 #3); NOT persisted
@@ -630,6 +660,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               runningToolLine = null;
               runningToolCmd = "";
               runningToolName = "";
+              runningTailBuf = "";
             }
             // Show real content, not bare "ok" (Leo: [bash] ok ×5 is noise).
             // Success -> condensed summary (decorations skipped, titles

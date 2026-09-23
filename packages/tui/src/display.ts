@@ -39,3 +39,30 @@ export function formatApprovalCommand(cmd: string): string {
   const shown = cut > MAX / 2 ? head.slice(0, cut) : head;
   return `${shown}… (truncated ${collapsed.length - shown.length} chars)`;
 }
+
+/** Strip ANSI CSI control sequences + bare CR so a live tail renders clean
+ *  (P1 streaming: raw chunks can carry colors/cursor moves/\r progress). */
+export function sanitizeTail(text: string): string {
+  return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\r/g, "");
+}
+
+/** Append a sanitized stdout chunk to a tail buffer, capped to the last
+ *  `maxLines` lines and `maxChars` total chars. Pure — no I/O; the partial
+ *  last line is kept verbatim until a newline completes it. */
+export function tailWindow(current: string, chunk: string, maxLines: number, maxChars = 4096): string {
+  let buf = current + sanitizeTail(chunk);
+  const lines = buf.split("\n");
+  if (lines.length > maxLines) {
+    buf = lines.slice(-maxLines).join("\n");
+  }
+  // Hard char cap (cursor finding #1): a single line without \n (progress bar)
+  // or a very long line must not bloat the 120ms setText unboundedly. Slice
+  // from the end, then drop the leading partial line so the tail starts on a
+  // line boundary.
+  if (buf.length > maxChars) {
+    buf = buf.slice(buf.length - maxChars);
+    const nl = buf.indexOf("\n");
+    if (nl !== -1) buf = buf.slice(nl + 1);
+  }
+  return buf;
+}
