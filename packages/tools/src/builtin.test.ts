@@ -8,7 +8,7 @@
 
 import { test, expect } from "bun:test";
 import { ToolRegistry } from "./index.ts";
-import { registerBuiltinTools, gitTool, tokenizeArgs } from "./builtin.ts";
+import { registerBuiltinTools, gitTool, tokenizeArgs, spawnToResult, shellToolShape } from "./builtin.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -163,4 +163,106 @@ test("bash tool: mid-run abort kills the process group and returns interrupted",
   const result = await p;
   expect(result.ok).toBe(false);
   expect(result.error).toContain("interrupted");
+});
+
+test("grep: exit 1 returns '(no matches)' via argv (no shell)", async () => {
+  const registry = makeRegistry();
+  const dir = mkdtempSync(join(tmpdir(), "chita-grep-"));
+  const result = await registry.execute(
+    "grep",
+    { pattern: "zzz-no-such-pattern-zzz", path: dir },
+    { cwd: dir, permission: "allow" }
+  );
+  expect(result.ok).toBe(true);
+  expect(result.output).toBe("(no matches)");
+});
+
+test("grep: finds matches via argv (no shell escaping of the pattern)", async () => {
+  const registry = makeRegistry();
+  const dir = mkdtempSync(join(tmpdir(), "chita-grep-"));
+  writeFileSync(join(dir, "a.txt"), "hello world\n");
+  const result = await registry.execute(
+    "grep",
+    { pattern: "hello", path: dir },
+    { cwd: dir, permission: "allow" }
+  );
+  expect(result.ok).toBe(true);
+  expect(result.output).toContain("hello");
+});
+
+test("grep: pattern with a quote stays literal via argv", async () => {
+  const registry = makeRegistry();
+  const dir = mkdtempSync(join(tmpdir(), "chita-grep-"));
+  writeFileSync(join(dir, "a.txt"), "it's a test\n");
+  const result = await registry.execute(
+    "grep",
+    { pattern: "it's", path: dir },
+    { cwd: dir, permission: "allow" }
+  );
+  expect(result.ok).toBe(true);
+  expect(result.output).toContain("it's");
+});
+
+test("ls: async lists directory entries", async () => {
+  const registry = makeRegistry();
+  const dir = mkdtempSync(join(tmpdir(), "chita-ls-"));
+  writeFileSync(join(dir, "probe.txt"), "x");
+  const result = await registry.execute("ls", { path: dir }, { cwd: dir, permission: "allow" });
+  expect(result.ok).toBe(true);
+  expect(result.output).toContain("probe.txt");
+});
+
+test("glob: async returns matches and '(no matches)' fallback", async () => {
+  const registry = makeRegistry();
+  const dir = mkdtempSync(join(tmpdir(), "chita-glob-"));
+  writeFileSync(join(dir, "a.ts"), "x");
+  const hit = await registry.execute("glob", { pattern: "*.ts" }, { cwd: dir, permission: "allow" });
+  expect(hit.ok).toBe(true);
+  expect(hit.output).toContain("a.ts");
+  const miss = await registry.execute("glob", { pattern: "*.py" }, { cwd: dir, permission: "allow" });
+  expect(miss.ok).toBe(true);
+  expect(miss.output).toBe("(no matches)");
+});
+
+test("git: async status streams stdout via ctx.onOutput", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "chita-git-"));
+  execSync("git init -q", { cwd: repo });
+  writeFileSync(join(repo, "a.txt"), "x");
+  execSync('git config user.email "t@t.local" && git config user.name t && git add -A && git commit -qm init', { cwd: repo });
+
+  const registry = makeRegistry();
+  const chunks: string[] = [];
+  writeFileSync(join(repo, "a.txt"), "y");
+  const result = await registry.execute(
+    "git",
+    { args: "status --porcelain" },
+    { cwd: repo, permission: "allow", onOutput: (c) => chunks.push(c) }
+  );
+  expect(result.ok).toBe(true);
+  expect(result.output).toContain("a.txt");
+  expect(chunks.length).toBeGreaterThan(0);
+});
+
+test("shellToolShape: timeout keeps partial stdout out of error (grep/git parity)", async () => {
+  const result = await spawnToResult(
+    ["/bin/bash", "-c", "echo progress; sleep 60"],
+    { cwd: "/tmp", timeoutMs: 200 },
+    shellToolShape(200, () => ({ ok: true, output: "unused" }))
+  );
+  expect(result.ok).toBe(false);
+  expect(result.error).toContain("timed out after 200ms");
+  expect(result.output).toContain("progress");
+});
+
+test("shellToolShape: abort mid-run returns interrupted", async () => {
+  const abort = new AbortController();
+  const p = spawnToResult(
+    ["/bin/bash", "-c", "sleep 60"],
+    { cwd: "/tmp", timeoutMs: 60000, signal: abort.signal },
+    shellToolShape(60000, () => ({ ok: true, output: "unused" }))
+  );
+  setTimeout(() => abort.abort(), 200);
+  const result = await p;
+  expect(result.ok).toBe(false);
+  expect(result.error).toBe("interrupted");
 });

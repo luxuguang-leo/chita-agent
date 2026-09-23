@@ -6,7 +6,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { execSync, execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { Tool, ToolContext, ToolResult, truncateOutput } from "./index.ts";
 
@@ -68,7 +68,7 @@ export const bashTool: Tool = {
     const timeoutMs = Number(args.timeoutMs ?? 60000);
     if (!command) return { ok: false, error: "command required" };
     // abort check before execution (T2); mid-command interrupt is handled by
-    // runShell's process-group kill (async spawn, T3)
+    // spawnToResult's process-group kill (async spawn, T3)
     if (ctx.signal?.aborted) return { ok: false, error: "aborted before execution" };
     return runShell(command, {
       cwd: ctx.cwd,
@@ -84,18 +84,36 @@ export const bashTool: Tool = {
 const MAX_BUF = 1024 * 1024;
 /** SIGTERM → grace → SIGKILL so stubborn children can't survive (cursor #1). */
 const KILL_GRACE_MS = 300;
+/** Fixed timeouts for the shell tools (P2 async exec). */
+const GREP_TIMEOUT_MS = 10000;
+const LS_TIMEOUT_MS = 5000;
+const GLOB_TIMEOUT_MS = 5000;
+const GIT_TIMEOUT_MS = 10000;
+
+/** Exit shaping for spawnToResult: maps (code, stdout, stderr, killed,
+ *  timedOut) to a ToolResult. Spawn failures (ENOENT etc.) do NOT go through
+ *  shape — the core returns a unified error on child "error" (P2 finding #1). */
+type ExitShape = (r: {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  killed: boolean;
+  timedOut: boolean;
+}) => ToolResult;
 
 /**
- * Run a shell command via async spawn (T3: replaces the execSync that froze
- * the TUI event loop). Streams stdout chunks through onOutput for live UI;
- * preserves execSync's four result shapes (see builtin.test.ts contract).
+ * Async spawn core (P2): argv 直传（无 shell）、detached 进程组、timeout
+ * SIGKILL、abort SIGTERM→grace→SIGKILL、1MB 有界尾、TextDecoder flush、
+ * onOutput 流式。退出时把 (code, stdout, stderr, killed, timedOut) 交给
+ * shape 塑形；spawn "error"（ENOENT 等）走核心统一错误、不调 shape。
  */
-function runShell(
-  command: string,
-  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal; onOutput?: (chunk: string) => void }
+export function spawnToResult(
+  argv: string[],
+  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal; onOutput?: (chunk: string) => void },
+  shape: ExitShape
 ): Promise<ToolResult> {
   return new Promise((resolve) => {
-    const child = spawn("/bin/bash", ["-c", command], {
+    const child = spawn(argv[0]!, argv.slice(1), {
       cwd: opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32", // own process group for group-kill
@@ -109,7 +127,7 @@ function runShell(
     let killed = false;
 
     const append = (text: string, to: "stdout" | "stderr"): void => {
-      if (!text) return; // decoder flush may yield "" — skip empty chunks (nit)
+      if (!text) return; // decoder flush may yield "" — skip empty chunks
       if (to === "stdout") {
         stdout += text;
         if (stdout.length > MAX_BUF) stdout = stdout.slice(stdout.length - MAX_BUF);
@@ -157,6 +175,7 @@ function runShell(
 
     child.stdout.on("data", (b: Buffer) => append(stdoutDec.decode(b, { stream: true }), "stdout"));
     child.stderr.on("data", (b: Buffer) => append(stderrDec.decode(b, { stream: true }), "stderr"));
+    // spawn failure (ENOENT etc.): unified error, NOT shape (P2 finding #1)
     child.on("error", (e) => finish({ ok: false, error: String(e) }));
     child.on("close", (code) => {
       // flush decoder tails (cursor finding #3): a chunk ending mid-code-point
@@ -171,30 +190,66 @@ function runShell(
       } catch {
         // decoder already flushed
       }
-      if (killed) {
-        // explicit interrupt outranks timeout when both fire in the same frame
-        const partial = truncateOutput(stdout);
-        finish({ ok: false, output: partial.output || undefined, truncated: partial.truncated, error: "interrupted" });
-      } else if (timedOut) {
-        // Timeout vs non-zero exit: partial stdout is PROGRESS, not the error
-        // (a compound `echo "===" ; curl …` killed mid-run must not read
-        // "error: === … -> 200").
-        const partial = truncateOutput(stdout || stderr);
-        finish({
-          ok: false,
-          output: partial.output || undefined,
-          truncated: partial.truncated,
-          error: `command timed out after ${opts.timeoutMs}ms — raise the timeoutMs arg if this run needs longer (curl/wget --max-time won't help: the tool kills first)`,
-        });
-      } else if (code !== 0) {
-        const detail = truncateOutput(stdout + stderr || "command failed");
-        finish({ ok: false, error: detail.output, truncated: detail.truncated, verificationHint: "command exited non-zero — inspect the output above" });
-      } else {
-        const out = truncateOutput(stdout);
-        finish({ ok: true, output: out.output, truncated: out.truncated });
-      }
+      finish(shape({ code, stdout, stderr, killed, timedOut }));
     });
   });
+}
+
+/** bash's exit shaping — P0's four branches moved verbatim (behavior unchanged). */
+function bashShape(timeoutMs: number): ExitShape {
+  return (r) => {
+    if (r.killed) {
+      // explicit interrupt outranks timeout when both fire in the same frame
+      const partial = truncateOutput(r.stdout);
+      return { ok: false, output: partial.output || undefined, truncated: partial.truncated, error: "interrupted" };
+    }
+    if (r.timedOut) {
+      // Timeout vs non-zero exit: partial stdout is PROGRESS, not the error
+      // (a compound `echo "===" ; curl …` killed mid-run must not read
+      // "error: === … -> 200").
+      const partial = truncateOutput(r.stdout || r.stderr);
+      return {
+        ok: false,
+        output: partial.output || undefined,
+        truncated: partial.truncated,
+        error: `command timed out after ${timeoutMs}ms — raise the timeoutMs arg if this run needs longer (curl/wget --max-time won't help: the tool kills first)`,
+      };
+    }
+    if (r.code !== 0) {
+      const detail = truncateOutput(r.stdout + r.stderr || "command failed");
+      return { ok: false, error: detail.output, truncated: detail.truncated, verificationHint: "command exited non-zero — inspect the output above" };
+    }
+    const out = truncateOutput(r.stdout);
+    return { ok: true, output: out.output, truncated: out.truncated };
+  };
+}
+
+/** Shared shape for the read-only shell tools: interrupt/timeout are uniform
+ *  across grep/ls/glob/git, then onExit maps the exit code (grep's exit-1 =
+ *  no-matches, git's stderr-on-failure). */
+export function shellToolShape(
+  timeoutMs: number,
+  onExit: (code: number | null, stdout: string, stderr: string) => ToolResult
+): ExitShape {
+  return (r) => {
+    if (r.killed) return { ok: false, error: "interrupted" };
+    if (r.timedOut) {
+      // keep partial stdout as PROGRESS (grep/git large-output parity with
+      // bashShape) — not the error
+      const partial = truncateOutput(r.stdout || r.stderr);
+      return { ok: false, output: partial.output || undefined, truncated: partial.truncated, error: `command timed out after ${timeoutMs}ms` };
+    }
+    return onExit(r.code, r.stdout, r.stderr);
+  };
+}
+
+/** Run a shell command via async spawn (T3/P0: replaces the execSync that
+ *  froze the TUI event loop). */
+function runShell(
+  command: string,
+  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal; onOutput?: (chunk: string) => void }
+): Promise<ToolResult> {
+  return spawnToResult(["/bin/bash", "-c", command], opts, bashShape(opts.timeoutMs));
 }
 
 export const grepTool: Tool = {
@@ -206,26 +261,23 @@ export const grepTool: Tool = {
     required: ["pattern"],
   },
   defaultPermission: "allow",
-  execute(args, ctx: ToolContext): ToolResult {
+  async execute(args, ctx: ToolContext): Promise<ToolResult> {
     const pattern = String(args.pattern ?? "");
     const path = String(args.path ?? ".");
     if (!pattern) return { ok: false, error: "pattern required" };
-    try {
-      const out = execSync(`grep -rn "${pattern.replace(/"/g, '\\"')}" "${path}"`, {
-        cwd: ctx.cwd,
-        timeout: 10000,
-        encoding: "utf-8",
-        shell: "/bin/bash",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const { output, truncated } = truncateOutput(out);
-      return { ok: true, output, truncated };
-    } catch (e: unknown) {
-      const err = e as { status?: number; stdout?: string; stderr?: string };
-      // grep exit 1 = no matches (not an error)
-      if (err.status === 1) return { ok: true, output: "(no matches)" };
-      return { ok: false, error: String(err.stderr ?? err) };
-    }
+    if (ctx.signal?.aborted) return { ok: false, error: "aborted before execution" };
+    // argv (no shell): the pattern goes verbatim — no quote-escaping hack,
+    // and shell metacharacters in the pattern stay literal (P2 §4).
+    return spawnToResult(
+      ["grep", "-rn", pattern, path],
+      { cwd: ctx.cwd, timeoutMs: GREP_TIMEOUT_MS, signal: ctx.signal, onOutput: ctx.onOutput },
+      shellToolShape(GREP_TIMEOUT_MS, (code, stdout, stderr) => {
+        if (code === 1) return { ok: true, output: "(no matches)" }; // grep exit 1 = no matches
+        if (code !== 0) return { ok: false, error: stderr || "grep failed" };
+        const out = truncateOutput(stdout);
+        return { ok: true, output: out.output, truncated: out.truncated };
+      })
+    );
   },
 };
 
@@ -237,20 +289,18 @@ export const lsTool: Tool = {
     properties: { path: { type: "string" } },
   },
   defaultPermission: "allow",
-  execute(args, ctx: ToolContext): ToolResult {
+  async execute(args, ctx: ToolContext): Promise<ToolResult> {
     const path = String(args.path ?? ".");
-    try {
-      const out = execSync(`ls -la "${path}"`, {
-        cwd: ctx.cwd,
-        timeout: 5000,
-        encoding: "utf-8",
-        shell: "/bin/bash",
-      });
-      const { output, truncated } = truncateOutput(out);
-      return { ok: true, output, truncated };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
+    if (ctx.signal?.aborted) return { ok: false, error: "aborted before execution" };
+    return spawnToResult(
+      ["ls", "-la", path],
+      { cwd: ctx.cwd, timeoutMs: LS_TIMEOUT_MS, signal: ctx.signal, onOutput: ctx.onOutput },
+      shellToolShape(LS_TIMEOUT_MS, (code, stdout, stderr) => {
+        if (code !== 0) return { ok: false, error: stderr || "ls failed" };
+        const out = truncateOutput(stdout);
+        return { ok: true, output: out.output, truncated: out.truncated };
+      })
+    );
   },
 };
 
@@ -263,20 +313,24 @@ export const globTool: Tool = {
     required: ["pattern"],
   },
   defaultPermission: "allow",
-  execute(args, ctx: ToolContext): ToolResult {
+  async execute(args, ctx: ToolContext): Promise<ToolResult> {
     const pattern = String(args.pattern ?? "");
     if (!pattern) return { ok: false, error: "pattern required" };
-    try {
-      const out = execSync(`ls -d ${pattern} 2>/dev/null || true`, {
-        cwd: ctx.cwd,
-        timeout: 5000,
-        encoding: "utf-8",
-        shell: "/bin/bash",
-      });
-      return { ok: true, output: out.trim() || "(no matches)" };
-    } catch (e) {
-      return { ok: false, error: String(e) };
-    }
+    if (ctx.signal?.aborted) return { ok: false, error: "aborted before execution" };
+    // glob expansion is done by the SHELL (`ls -d *.ts`): argv would pass
+    // `*.ts` to ls as a literal. Keep shell-based (P2 §4); `|| true` forces
+    // exit 0 and `2>/dev/null` drops the "no such file" stderr.
+    return spawnToResult(
+      ["/bin/bash", "-c", `ls -d ${pattern} 2>/dev/null || true`],
+      { cwd: ctx.cwd, timeoutMs: GLOB_TIMEOUT_MS, signal: ctx.signal, onOutput: ctx.onOutput },
+      shellToolShape(GLOB_TIMEOUT_MS, (code, stdout) => {
+        if (code !== 0) return { ok: false, error: "glob failed" };
+        const trimmed = stdout.trim();
+        if (!trimmed) return { ok: true, output: "(no matches)" };
+        const out = truncateOutput(trimmed);
+        return { ok: true, output: out.output, truncated: out.truncated };
+      })
+    );
   },
 };
 
@@ -289,11 +343,11 @@ export const gitTool: Tool = {
     required: ["args"],
   },
   defaultPermission: "allow",
-  execute(args, ctx: ToolContext): ToolResult {
+  async execute(args, ctx: ToolContext): Promise<ToolResult> {
     const sub = String(args.args ?? "").trim();
 
     // Read-only guard (v2.1 decision #5). Reject:
-    // - shell metacharacters (no shell is used — execFileSync argv, but keep
+    // - shell metacharacters (no shell is used — spawn argv, but keep
     //   the guard for defense in depth)
     // - write subcommands (commit/push/add/rm/reset/checkout/branch)
     if (/[;&|`$()<>]/.test(sub)) {
@@ -303,22 +357,19 @@ export const gitTool: Tool = {
       return { ok: false, error: `git write ops go through bash in M1; allowed: status/diff/log/show (got: ${sub})` };
     }
     // branch removed from M1 whitelist (Cursor F4: branch -D is destructive)
-    try {
-      // argv array via shell-style tokenizer (handles quoted paths; no shell
-      // interpolation — Cursor F7: split(' ') broke quoted paths)
-      const argv = tokenizeArgs(sub);
-      const out = execFileSync("git", argv, {
-        cwd: ctx.cwd,
-        timeout: 10000,
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const { output, truncated } = truncateOutput(out);
-      return { ok: true, output, truncated };
-    } catch (e: unknown) {
-      const err = e as { stdout?: string; stderr?: string };
-      return { ok: false, error: String(err.stderr ?? err) };
-    }
+    if (ctx.signal?.aborted) return { ok: false, error: "aborted before execution" };
+    // argv via shell-style tokenizer (handles quoted paths; no shell
+    // interpolation — Cursor F7: split(' ') broke quoted paths)
+    const argv = tokenizeArgs(sub);
+    return spawnToResult(
+      ["git", ...argv],
+      { cwd: ctx.cwd, timeoutMs: GIT_TIMEOUT_MS, signal: ctx.signal, onOutput: ctx.onOutput },
+      shellToolShape(GIT_TIMEOUT_MS, (code, stdout, stderr) => {
+        if (code !== 0) return { ok: false, error: stderr || "git failed" };
+        const out = truncateOutput(stdout);
+        return { ok: true, output: out.output, truncated: out.truncated };
+      })
+    );
   },
 };
 
@@ -351,7 +402,7 @@ export function registerBuiltinTools(registry: { register(t: Tool): void }): voi
 /**
  * Minimal shell-style argv tokenizer: splits on whitespace but respects
  * single and double quotes (for paths with spaces). No expansion, no
- * interpolation — safe for execFileSync argv (Cursor F7).
+ * interpolation — safe for spawn argv (Cursor F7).
  */
 export function tokenizeArgs(input: string): string[] {
   const args: string[] = [];
