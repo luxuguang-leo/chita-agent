@@ -9,7 +9,7 @@
  *   chita --resume         session resume (M1.5+; placeholder)
  */
 
-import { loadConfig, initConfig, apiKey, CONFIG_PATH, budgetTokensFor } from "./config.ts";
+import { loadConfig, initConfig, apiKey, CONFIG_PATH, budgetTokensFor, compactCeilingFor } from "./config.ts";
 import { AgentLoop } from "@chita/agent/src/loop.ts";
 import { friendlyError } from "@chita/agent/src/errors.ts";
 import { OpenAICompatibleProvider } from "@chita/ai/src/index.ts";
@@ -65,7 +65,7 @@ async function runAgent(task: string, opts: { plan?: boolean; judge?: boolean })
     provider,
     mode: opts.plan ? "plan" : "build",
     maxTokens: budgetTokensFor(cfg), // per-run spend fuse, decoupled from contextWindow (cur-057/058)
-    contextMaxTokens: cfg.contextWindow, // compaction ceiling stays on contextWindow (cur-058 review)
+    contextMaxTokens: compactCeilingFor(cfg), // soft compaction ceiling (cur-xxx: decouple from 1M hard window)
     autoApproveAsk: true, // --print dev mode (v2.1 §2.3)
     // P1-2 memory (cur-104 Q3): default OFF for non-interactive runs; opt in via CHITA_MEMORY=1
     memory: process.env.CHITA_MEMORY === "1" ? { enabled: true } : undefined,

@@ -33,7 +33,7 @@ import { runJudge } from "../../agent/src/judge.ts";
 import { JudgeBudget } from "../../agent/src/judge.ts";
 import { OpenAICompatibleProvider } from "../../ai/src/index.ts";
 import { scrubSecrets } from "../../agent/src/scrub.ts";
-import { loadConfig, apiKey, budgetTokensFor } from "../../cli/src/config.ts";
+import { loadConfig, apiKey, budgetTokensFor, compactCeilingFor } from "../../cli/src/config.ts";
 import { renderBanner } from "../../cli/src/banner.ts";
 import { VERSION } from "../../cli/src/index.ts";
 import {
@@ -221,6 +221,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   };
   let mode: "build" | "plan" = "build";
   let tokensUsed: { total: number; input: number; output: number } = { total: 0, input: 0, output: 0 };
+  /** Input tokens billed THIS turn (Δ since the turn started) — the status bar
+   *  shows it as ↑N(ΔM) so per-turn burn is visible, not just the cumulative
+   *  total (cur-xxx: a growing session re-sends history every turn; the Δ is
+   *  what tells you how much THIS step cost). */
+  let turnInputDelta = 0;
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
   let pendingInputs: string[] = []; // FIFO queue while running (cur-038)
@@ -253,6 +258,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
    *  last MAX_TAIL_LINES lines, ANSI-sanitized. Filled by onToolOutput,
    *  rendered by the 120ms spinner tick — never requestRender'd directly. */
   let runningTailBuf = "";
+  // --- cur-xxx 卡死检测: rolling window of the last tool results — ≥3 failures
+  // in 6 calls warns the user (a stuck agent re-tries failing probe scripts
+  // interleaved with trivial oks, so a bare "3 consecutive" never fires).
+  const TOOL_FAIL_WINDOW = 6;
+  const TOOL_FAIL_THRESHOLD = 3;
+  let toolWindow: boolean[] = [];
+  let failureWarned = false;
   // TUI-level judge budget singleton (cur-040 major: per-invocation instance
   // reset the max-3-per-session counter every /goal)
   const judgeBudget = new JudgeBudget({});
@@ -400,7 +412,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   function setStatus(suffix = ""): void {
     const sid = sessionId ? sessionId.slice(-8) : "new"; // short id (cur-042)
-    const ctx = cfg.contextWindow ?? 131_072;
+    // ctx% is relative to the SOFT compaction ceiling, not the 1M hard window:
+    // the conversation is compacted at 0.9×ceiling, so 90% means "about to
+    // compact" (cur-xxx). The hard window is still what the provider enforces.
+    const ctx = compactCeilingFor(cfg);
     // Context occupancy = the CURRENT conversation's actual length
     // (estimateTokens), NOT cumulative API consumption — the API resends all
     // history every turn, so summing usage.input inflates the %. ↑↓ stay
@@ -411,9 +426,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       cur = estimateTokens(conv.map((m) => m.content ?? "").join("\n"));
     }
     const pct = ctx > 0 ? Math.round((cur / ctx) * 100) : 0;
+    const delta = turnInputDelta > 0 ? `(Δ${fmtTokens(turnInputDelta)})` : "";
     statusText.setText(
       `session: ${sid} | mode: ${mode} | model: ${cfg.model} | ` +
-        `↑${fmtTokens(tokensUsed.input)} ↓${fmtTokens(tokensUsed.output)} | ctx ${fmtTokens(cur)}/${fmtTokens(ctx)} (${pct}%)${suffix}`
+        `↑${fmtTokens(tokensUsed.input)}${delta} ↓${fmtTokens(tokensUsed.output)} | ctx ${fmtTokens(cur)}/${fmtTokens(ctx)} (${pct}%)${suffix}`
     );
     // spinner ticks call this every 120 ms — must stay differential, or the
     // whole screen + scrollback is cleared and reprinted 8x/second
@@ -456,7 +472,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       // P1 streaming: rebuild the row as `[name] ⠋ cmd` + the live tail so the
       // 120ms spinner tick doesn't overwrite streamed stdout (finding #2)
       const tail = runningTailBuf ? `\n${runningTailBuf}` : "";
-      runningToolLine.setText(`[${runningToolName}] ${frame} ${runningToolCmd}${tail}`);
+      // heartbeat (cur-xxx): show elapsed + a longer command so the user can
+      // tell WHAT is running, not just "running bash (23s)" with no target
+      runningToolLine.setText(`[${runningToolName}] ${frame} (${elapsed}s) ${runningToolCmd}${tail}`);
     }
   }
 
@@ -501,13 +519,29 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
    *  approval decision (F3). */
   const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
+  /** 卡死检测 (cur-xxx): rolling window of the last TOOL_FAIL_WINDOW tool
+   *  results. ≥TOOL_FAIL_THRESHOLD failures warns once — a stuck agent
+   *  re-tries failing probe scripts interleaved with trivial oks, so a bare
+   *  "3 consecutive failures" never fires. Reset when the window clears. */
+  function noteToolResult(ok: boolean): void {
+    toolWindow.push(ok);
+    if (toolWindow.length > TOOL_FAIL_WINDOW) toolWindow.shift();
+    const failures = toolWindow.filter((o) => !o).length;
+    if (failures >= TOOL_FAIL_THRESHOLD && !failureWarned) {
+      failureWarned = true;
+      appendMessage("system", `⚠ 最近 ${toolWindow.length} 个工具调用 ${failures} 个失败 — 可能卡住，Ctrl+C 中断`);
+    } else if (failures < TOOL_FAIL_THRESHOLD) {
+      failureWarned = false;
+    }
+  }
+
   function buildLoop(): AgentLoop {
     return new AgentLoop({
       cwd: process.cwd(),
       provider: makeProvider(),
       mode,
       maxTokens: budgetTokensFor(cfg), // per-run spend fuse, decoupled from contextWindow (cur-057/058)
-      contextMaxTokens: cfg.contextWindow, // compaction ceiling stays on contextWindow (cur-058 review)
+      contextMaxTokens: compactCeilingFor(cfg), // soft compaction ceiling, NOT the 1M hard window (cur-xxx)
       autoApproveAsk: true,
       permissionTimeoutMs: APPROVAL_TIMEOUT_MS, // in step with the TUI waiter (F3)
       // P1-2 memory (cur-104 Q3): interactive TUI defaults ON; opt out via CHITA_MEMORY=0
@@ -573,17 +607,20 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           appendStreamed(msg.content);
         },
         onEvent: (ev) => {
-  /** Brief command for the tool line: strip redirection/noise, keep first
-   *  two words (omp style). 'ls -la ~/.agents 2>/dev/null; echo ---' ->
-   *  'ls -la …'. Full command stays in /tool. (Leo: long cmd text = noise.) */
-  function briefCmd(cmd: string): string {    const cleaned = cmd
+  /** Brief command for the tool line: strip redirection/noise, keep the first
+   *  80 chars (fold the tail). 'ls -la ~/.agents 2>/dev/null; echo ---' ->
+   *  'ls -la ~/.agents'. The old 2-word cut ('sed -n 1,60p file' -> 'sed -n…')
+   *  lost the target and made the running-tool row useless (cur-xxx: "卡住
+   *  不知道在干啥"). Full command stays in /tool. */
+  function briefCmd(cmd: string): string {
+    const cleaned = cmd
       .replace(/\s*2>\s*\/dev\/null/g, "")
       .replace(/\s*>\s*\/dev\/null/g, "")
       .replace(/\s*\|\s*head(\s+-\d+)?.*$/, "")
       .replace(/;\s*echo\s+["'-]+.*$/, "")
       .trim();
-    if (cleaned.length <= 34) return cleaned;
-    return cleaned.split(/\s+/).slice(0, 2).join(" ") + "…";
+    if (cleaned.length <= 80) return cleaned;
+    return cleaned.slice(0, 80) + "…";
   }
 
   /** Condensed tool summary for the message area (omp/hermes style): skip
@@ -687,6 +724,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             }
             // remember full result for /tool expansion (cur-042)
             toolResults.set(ev.toolName, { ok: ev.ok, output: ev.output, error: ev.error });
+            noteToolResult(ev.ok);
             // persist tool result to tape (cur-042)
             tapeAppend({
               type: "tool_result",
@@ -931,14 +969,17 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     startSpinner("thinking");
     streamedThisTurn = false; // reset per-turn (cur-056)
     streamingBuffer = ""; // defensive: never carry over from a prior turn
+    turnInputDelta = 0; // reset per-turn Δ until the turn's usage lands (cur-xxx)
 
     // Set when the turn was aborted (Esc/Ctrl+C). An aborted turn must NOT
     // fire the queued follow-ups at the context the user just rejected; the
     // queue is returned to the editor instead. Normal completion drains it.
     let cancelled = false;
     try {
+      const turnStartInput = tokensUsed.input; // Δ baseline for the status bar (cur-xxx)
       const result = await loop.continue(value); // multi-turn
       tokensUsed = loop.getTokensUsed(); // real usage from provider (cur-045)
+      turnInputDelta = Math.max(0, tokensUsed.input - turnStartInput);
       if (result.state === "CANCELLED") {
         cancelled = true;
         appendMessage("system", "cancelled");

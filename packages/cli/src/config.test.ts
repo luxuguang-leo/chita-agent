@@ -8,7 +8,7 @@
  */
 
 import { test, expect } from "bun:test";
-import { budgetTokensFor, DEFAULT_CONFIG } from "./config.ts";
+import { budgetTokensFor, compactCeilingFor, DEFAULT_COMPACT_TOKENS, DEFAULT_CONFIG } from "./config.ts";
 
 test("budgetTokensFor: default = contextWindow × 8 (128K ctx → 1,048,576)", () => {
   const cfg = { ...DEFAULT_CONFIG, contextWindow: 131_072 };
@@ -28,4 +28,28 @@ test("budgetTokensFor: explicit budgetTokens wins and is uncapped", () => {
 test("budgetTokensFor: zero/negative explicit value is honored (no magic floor)", () => {
   const cfg = { ...DEFAULT_CONFIG, contextWindow: 131_072, budgetTokens: 0 };
   expect(budgetTokensFor(cfg)).toBe(0);
+});
+
+// --- compactCeilingFor: soft compaction ceiling, decoupled from the hard window ---
+// (the original bug: a 1M-window model never hits 0.9×1M≈943K, so compaction
+//  never fired and the session re-sent its whole growing history every turn.)
+
+test("compactCeilingFor: 1M hard window caps at DEFAULT_COMPACT_TOKENS (256K)", () => {
+  const cfg = { ...DEFAULT_CONFIG, contextWindow: 1_048_576 };
+  expect(compactCeilingFor(cfg)).toBe(DEFAULT_COMPACT_TOKENS);
+});
+
+test("compactCeilingFor: smaller hard window wins (128K ctx → 128K, not 256K)", () => {
+  const cfg = { ...DEFAULT_CONFIG, contextWindow: 131_072 };
+  expect(compactCeilingFor(cfg)).toBe(131_072);
+});
+
+test("compactCeilingFor: explicit compactTokens wins (uncapped by hard window)", () => {
+  const cfg = { ...DEFAULT_CONFIG, contextWindow: 1_048_576, compactTokens: 96_000 };
+  expect(compactCeilingFor(cfg)).toBe(96_000);
+});
+
+test("compactCeilingFor: explicit compactTokens above hard window is clamped down", () => {
+  const cfg = { ...DEFAULT_CONFIG, contextWindow: 131_072, compactTokens: 1_000_000 };
+  expect(compactCeilingFor(cfg)).toBe(131_072);
 });

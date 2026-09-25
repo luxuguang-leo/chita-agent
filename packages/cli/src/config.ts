@@ -27,6 +27,13 @@ export interface Config {
    *  session every turn, so a 128K context can burn 161K+ in one run; the fuse
    *  must scale with the model, not equal the context window. */
   budgetTokens?: number;
+  /** Soft compaction ceiling (tokens), decoupled from the model's hard
+   *  context window. Compaction triggers at 0.9×min(contextWindow,
+   *  compactTokens) — a 1M-window model (DeepSeek) otherwise never hits the
+   *  0.9×1M≈943K threshold and re-sends the whole (growing) session every
+   *  turn, burning input tokens quadratically. Defaults to DEFAULT_COMPACT_TOKENS
+   *  (256K) when not set; explicit value always wins. */
+  compactTokens?: number;
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -36,12 +43,26 @@ export const DEFAULT_CONFIG: Config = {
   contextWindow: 131_072,
 };
 
+/** Soft compaction ceiling when `compactTokens` is not set. 256K is a
+ *  compromise: low enough to fire compaction long before a 1M hard window,
+ *  high enough to avoid over-aggressive summarization. Overridable per-model
+ *  via config.json `compactTokens`. */
+export const DEFAULT_COMPACT_TOKENS = 262_144;
+
 /** Config directory (decision #6: ~/.chita/) */
 export const CONFIG_DIR = `${process.env.HOME}/.chita`;
 export const CONFIG_PATH = `${CONFIG_DIR}/config.json`;
 
 /** Whitelist: config.json only accepts these keys; unknown keys (e.g. apiKey) never enter memory */
-const CONFIG_KEYS = ["provider", "model", "permissionDefault", "contextWindow", "budgetTokens"] as const;
+const CONFIG_KEYS = ["provider", "model", "permissionDefault", "contextWindow", "budgetTokens", "compactTokens"] as const;
+
+/** Soft compaction ceiling: min(hard contextWindow, compactTokens). The
+ *  hard window stays 1M (legal window untouched); compaction just fires at
+ *  the smaller soft ceiling so the session is summarized before it balloons.
+ *  Explicit compactTokens wins; falls back to DEFAULT_COMPACT_TOKENS (256K). */
+export function compactCeilingFor(cfg: Config): number {
+  return Math.min(cfg.contextWindow, cfg.compactTokens ?? DEFAULT_COMPACT_TOKENS);
+}
 
 /** Per-run spend fuse: explicit budgetTokens wins, else contextWindow × 8.
  *  contextWindow × 8 keeps the original "model-scaled ceiling" intent (cur-057)
