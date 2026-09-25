@@ -1,6 +1,7 @@
 # 修复草案：sess-mue9vq6c 会话审阅发现（4 类问题）
 
-- **状态**：方案已定（已吸收 Cursor 设计评审 cur-20260925-217，verdict=approve_with_nits），代码未改
+- **状态**：P0/P1 已实现并提交，P2 待做
+- **进度**：P0 = `317df70`（soft compact + 心跳 + 卡死 + Δinput）；P1 = `07669f6`（授权单键 Enter=deny + dup-turn 去重 + `~/.chita/tmp/` 白名单 + usage 落盘 + `Users/` 清理 + `.chita/` gitignore）；P2（AGENTS.md 守则）未做
 - **来源**：对 `~/.chita/agent/sessions/--Users-luxuguang-Projects-chita-agent/sess-mue9vq6c.jsonl` 的逐行审阅（220 行，107 tool_call / 106 tool_result / 4 message / 3 usage）
 - **日期**：2026-09-25
 
