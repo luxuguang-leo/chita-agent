@@ -49,6 +49,8 @@ import { estimateTokens } from "../../agent/src/context.ts";
 import { historyFromEvents } from "../../agent/src/history.ts";
 import { mergeQueuedIntoDraft } from "./queue.ts";
 import { isBannerCmd, formatApprovalCommand, tailWindow } from "./display.ts";
+import { visibleWidth, wrapTextWithAnsi } from "../vendor/utils.ts";
+import type { Component } from "../vendor/tui.ts";
 
 /** Describe the most recent session in this cwd: id + first user message +
  *  age. Returns null when none. Used for the startup hint and /resume
@@ -237,6 +239,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // the next input line resolves it (allow/deny/timeout). Non-null only while
   // the loop awaits onPermissionRequest.
   let approvalWaiter: { resolve: (allow: boolean) => void; toolName: string; reason: string } | null = null;
+  // 本次会话放行白名单（按 guardian reason）：弹窗选「本次会话放行」后，
+  // 同 reason 的危险操作不再弹窗，直接放行（参考 hermes 的 "Allow this
+  // session"）。进程级，不跨会话持久化。
+  const sessionAllow = new Set<string>();
 
   // --- cur-058 spinner state (waiting indicator) ---
   const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -308,6 +314,79 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     tool: yellow,
     system: gray,
   };
+
+  /** 授权弹窗面板（参考 hermes approval overlay）：独立覆盖层 + 手绘边框，
+   *  完整命令换行展示，↑/↓/数字选择。不会被消息流冲掉。 */
+  class ApprovalPanel implements Component {
+    private sel = 0;
+    private readonly opts = ["放行一次", "本次会话放行", "拒绝"] as const;
+    onPick: ((choice: "once" | "session" | "deny") => void) | null = null;
+    onCancel: (() => void) | null = null;
+
+    constructor(
+      private readonly command: string,
+      private readonly label: string,
+      private readonly why: string,
+    ) {}
+
+    private line(inner: number, content: string): string {
+      const vis = visibleWidth(content);
+      const pad = Math.max(0, inner - vis);
+      return content + " ".repeat(pad);
+    }
+
+    render(width: number): string[] {
+      const w = Math.max(36, Math.min(width - 6, 92));
+      const inner = w - 2;
+      const hr = "─".repeat(inner);
+      const out: string[] = [];
+      out.push(yellow(`╭${hr}╮`));
+      out.push(yellow("│") + this.line(inner, brightWhite(` ⚠ 需要授权 · ${this.label}`)) + yellow("│"));
+      if (this.why) out.push(yellow("│") + this.line(inner, gray(` ${this.why}`)) + yellow("│"));
+      out.push(yellow("│") + this.line(inner, "") + yellow("│"));
+      for (const cl of wrapTextWithAnsi(this.command, inner - 2)) {
+        out.push(yellow("│") + this.line(inner, ` ${cl}`) + yellow("│"));
+      }
+      out.push(yellow("│") + this.line(inner, "") + yellow("│"));
+      this.opts.forEach((o, i) => {
+        const marker = i === this.sel ? "▸ " : "  ";
+        const text = `${marker}${i + 1}. ${o}`;
+        out.push(yellow("│") + this.line(inner, i === this.sel ? brightWhite(text) : gray(text)) + yellow("│"));
+      });
+      out.push(yellow("│") + this.line(inner, "") + yellow("│"));
+      out.push(yellow("│") + this.line(inner, dim(" ↑/↓ 选择 · Enter 确认 · 1-3 快速 · Esc/Ctrl+C 拒绝")) + yellow("│"));
+      out.push(yellow(`╰${hr}╯`));
+      return out;
+    }
+
+    handleInput(data: string): void {
+      if (matchesKey(data, "up")) {
+        this.sel = (this.sel + this.opts.length - 1) % this.opts.length;
+        tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, "down")) {
+        this.sel = (this.sel + 1) % this.opts.length;
+        tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, "escape")) {
+        this.onCancel?.();
+        return;
+      }
+      if (matchesKey(data, "enter") || matchesKey(data, "return")) {
+        this.onPick?.((["once", "session", "deny"] as const)[this.sel]);
+        return;
+      }
+      if (data === "1" || data === "2" || data === "3") {
+        this.onPick?.((["once", "session", "deny"] as const)[Number(data) - 1]);
+      }
+    }
+
+    invalidate(): void {
+      // stateless render each frame — nothing to cache
+    }
+  }
 
   function appendMessage(role: string, content: string): void {
     const color = ROLE_COLOR[role] ?? ((s: string) => s);
@@ -424,10 +503,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   function setStatus(suffix = ""): void {
     const sid = sessionId ? sessionId.slice(-8) : "new"; // short id (cur-042)
-    // ctx% is relative to the SOFT compaction ceiling, not the 1M hard window:
-    // the conversation is compacted at 0.9×ceiling, so 90% means "about to
-    // compact" (cur-xxx). The hard window is still what the provider enforces.
-    const ctx = compactCeilingFor(cfg);
+    // ctx% is relative to the model's HARD context window (1M for DeepSeek) —
+    // that is the real ceiling the provider enforces. Compaction still fires
+    // at 0.9×soft ceiling (compactCeilingFor) long before, but the % should
+    // answer "how full is the actual context", not "how close to compaction".
+    const ctx = cfg.contextWindow ?? 131_072;
     // Context occupancy = the CURRENT conversation's actual length
     // (estimateTokens), NOT cumulative API consumption — the API resends all
     // history every turn, so summing usage.input inflates the %. ↑↓ stay
@@ -453,7 +533,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const st = loop?.state ?? "THINKING";
     if (st === "TOOL_CALL") return runningToolName ? `running ${runningToolName}` : "running tool";
     if (st === "OBSERVING") return "reading result";
-    if (st === "WAITING_USER") return "awaiting approval · y/n (Enter=deny)";
+    if (st === "WAITING_USER") return "awaiting approval · ↑/↓ 选择";
     return "thinking";
   }
 
@@ -571,23 +651,30 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             : typeof args.path === "string" ? args.path
             : typeof args.pattern === "string" ? args.pattern
             : "";
-          // reason looks like "guardian[credential]: reading credential-bearing
-          // file". Split it so the user sees the WHAT (Chinese category) and
-          // WHY (rule hint) plus an explicit how-to-answer line.
+          // 本次会话已放行同类风险操作 → 直接放行，不再弹窗（参考 hermes
+          // "Allow this session"，按 guardian reason 粒度）。
+          if (sessionAllow.has(reason)) return Promise.resolve(true);
           const m = reason.match(/^guardian\[(\w+)\]:\s*(.*)$/);
           const label = m ? categoryLabel(m[1] as GuardianCategory) : "风险操作";
           const why = m ? m[2] : reason;
-          appendMessage("system", `⏸ 需要授权【${label}】${why}`);
-          appendMessage("system", `   命令: ${formatApprovalCommand(cmd)}`);
-          appendMessage("system", `   → 按 y 放行 / n 拒绝 / Enter 拒绝（5 分钟不回复 = 拒绝）`);
+          // 参考 hermes approval overlay：独立覆盖层 + 完整命令 + ↑/↓/数字
+          // 选择，不会被消息流冲掉。Esc/Ctrl+C 走全局 cancelTurn → deny。
+          const panel = new ApprovalPanel(formatApprovalCommand(cmd), label, why);
+          const overlay = tui.showOverlay(panel, { anchor: "center", maxHeight: "80%" });
           return new Promise<boolean>((resolve) => {
             let settled = false;
             const finish = (allow: boolean) => {
               if (settled) return; // F3: ignore late resolves after timeout/Ctrl+C
               settled = true;
+              overlay.hide();
               if (approvalWaiter?.toolName === toolName) approvalWaiter = null;
               resolve(allow);
             };
+            panel.onPick = (choice) => {
+              if (choice === "session") sessionAllow.add(reason);
+              finish(choice !== "deny");
+            };
+            panel.onCancel = () => finish(false);
             approvalWaiter = { resolve: finish, toolName, reason };
             // No waiter-side timeout: the loop owns the approval timeout
             // (Promise.race in runTool). A duplicate 5-min timer here fired
@@ -1130,25 +1217,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     if (data === "\u0003" || KITTY_CTRL_C.test(data)) {
       handleCtrlC();
       return { consume: true };
-    }
-    // M-next WAITING_USER single-key approval (cur-xxx): y allows, n denies,
-    // no Enter needed — typing the full word "allow" was unfriendly. Other
-    // keys fall through to the editor, so the old allow/deny words still work
-    // via onSubmit (which defaults Enter/empty to deny).
-    if (approvalWaiter) {
-      const w = approvalWaiter;
-      if (data === "y" || data === "Y") {
-        approvalWaiter = null;
-        appendMessage("system", `✓ allowed ${w.toolName} (${w.reason})`);
-        w.resolve(true);
-        return { consume: true };
-      }
-      if (data === "n" || data === "N") {
-        approvalWaiter = null;
-        appendMessage("system", `✗ denied ${w.toolName} (${w.reason})`);
-        w.resolve(false);
-        return { consume: true };
-      }
     }
     // Esc = cancel the running turn (pi/Codex). Don't steal it while the
     // autocomplete menu is open — there the editor uses Esc to close the menu.
