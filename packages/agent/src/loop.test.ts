@@ -452,3 +452,35 @@ test("P1-2 memory wiring: ERROR never writes MEMORY.md", async () => {
   expect(readLayer(cwd, "memory")).toBe(""); // DONE-only consolidation (cur-104 Q1)
   rmSync(repo, { recursive: true, force: true });
 });
+
+test("assistant text with toolCalls is not re-emitted to onAssistantMessage (duplicate-turn fix)", async () => {
+  // Real provider stream: deltas first, then ONE full-snapshot message carrying
+  // the accumulated content + toolCalls. The loop must forward only the deltas
+  // to onAssistantMessage — the TUI appends every hook payload to its buffer,
+  // so forwarding the snapshot doubles the text and corrupts the tape.
+  const seen: string[] = [];
+  const script: StreamEvent[][] = [
+    [
+      { kind: "message", message: { role: "assistant", content: "Now I " } },
+      { kind: "message", message: { role: "assistant", content: "will read it" } },
+      {
+        kind: "message",
+        message: {
+          role: "assistant",
+          content: "Now I will read it",
+          toolCalls: [{ id: "c1", name: "read", args: "{}" }],
+        },
+      },
+      { kind: "tool_call", toolName: "read", args: { path: "package.json" }, callId: "c1" },
+    ],
+    [{ kind: "done", summary: "ok" }],
+  ];
+  const loop = new AgentLoop({
+    cwd: "/tmp",
+    provider: new FakeProvider(() => script),
+    hooks: { onAssistantMessage: (m) => seen.push(m.content) },
+  });
+  const result = await loop.run("read it");
+  expect(result.state).toBe("DONE");
+  expect(seen.join("")).toBe("Now I will read it");
+});

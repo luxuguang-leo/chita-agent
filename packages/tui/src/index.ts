@@ -226,6 +226,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
    *  total (cur-xxx: a growing session re-sends history every turn; the Δ is
    *  what tells you how much THIS step cost). */
   let turnInputDelta = 0;
+  /** True once ANY turn activity is observed (tool_call/tool_result/etc.).
+   *  Separated from streamedThisTurn so a pure tool-call turn (no streamed
+   *  text) still snapshots usage on endStreaming (cur-xxx). */
+  let turnHadActivity = false;
   let running = false; // re-entrancy lock (cur-033 #6)
   let cancelCurrent: (() => void) | null = null;
   let pendingInputs: string[] = []; // FIFO queue while running (cur-038)
@@ -378,6 +382,14 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // the stuck session's tape with repeated
     // "让我再看几个关键 references…" / "let me check a few more key references…".
     if (!streamedThisTurn) {
+      // persist usage FIRST even when no text streamed this turn — a pure
+      // tool-call turn must still snapshot the counter for /resume (cur-xxx:
+      // the old early-return dropped it). Only skip when the provider never
+      // ran at all (no event) — that's the cur-056 stale-write guard.
+      if (loop && turnHadActivity) {
+        const u = loop.getTokensUsed();
+        tapeAppend({ type: "usage", total: u.total, input: u.input, output: u.output });
+      }
       streamingText = null;
       streamingBuffer = "";
       return;
@@ -441,7 +453,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const st = loop?.state ?? "THINKING";
     if (st === "TOOL_CALL") return runningToolName ? `running ${runningToolName}` : "running tool";
     if (st === "OBSERVING") return "reading result";
-    if (st === "WAITING_USER") return "awaiting approval · type allow/deny";
+    if (st === "WAITING_USER") return "awaiting approval · y/n (Enter=deny)";
     return "thinking";
   }
 
@@ -567,7 +579,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           const why = m ? m[2] : reason;
           appendMessage("system", `⏸ 需要授权【${label}】${why}`);
           appendMessage("system", `   命令: ${formatApprovalCommand(cmd)}`);
-          appendMessage("system", `   → 回复 allow 放行 / deny 拒绝（5 分钟不回复 = 拒绝）`);
+          appendMessage("system", `   → 按 y 放行 / n 拒绝 / Enter 拒绝（5 分钟不回复 = 拒绝）`);
           return new Promise<boolean>((resolve) => {
             let settled = false;
             const finish = (allow: boolean) => {
@@ -607,6 +619,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           appendStreamed(msg.content);
         },
         onEvent: (ev) => {
+          turnHadActivity = true; // any tool/truncate/error event = real activity (cur-xxx)
   /** Brief command for the tool line: strip redirection/noise, keep the first
    *  80 chars (fold the tail). 'ls -la ~/.agents 2>/dev/null; echo ---' ->
    *  'ls -la ~/.agents'. The old 2-word cut ('sed -n 1,60p file' -> 'sed -n…')
@@ -742,10 +755,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   async function onSubmit(raw: string): Promise<void> {
     const value = raw.trim();
-    if (!value) return;
     // M-next WAITING_USER: while the loop awaits permission, the next line is
-    // the decision — allow/yes/approve grants, anything else denies. Do NOT
-    // route it to the model (the loop is suspended mid-tool).
+    // the decision — allow/yes/approve grants, anything else (including an
+    // empty Enter) denies (cur-xxx: Enter defaults to deny). Do NOT route it
+    // to the model (the loop is suspended mid-tool).
     if (approvalWaiter) {
       const w = approvalWaiter;
       approvalWaiter = null;
@@ -754,6 +767,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       w.resolve(allow);
       return;
     }
+    if (!value) return;
     // record non-slash task prompts in editor history (↑↓ navigation)
     if (!value.startsWith("/")) input.addToHistory(value);
     if (running) {
@@ -970,6 +984,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     streamedThisTurn = false; // reset per-turn (cur-056)
     streamingBuffer = ""; // defensive: never carry over from a prior turn
     turnInputDelta = 0; // reset per-turn Δ until the turn's usage lands (cur-xxx)
+    turnHadActivity = false; // reset per-turn activity flag (cur-xxx)
 
     // Set when the turn was aborted (Esc/Ctrl+C). An aborted turn must NOT
     // fire the queued follow-ups at the context the user just rejected; the
@@ -1115,6 +1130,25 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     if (data === "\u0003" || KITTY_CTRL_C.test(data)) {
       handleCtrlC();
       return { consume: true };
+    }
+    // M-next WAITING_USER single-key approval (cur-xxx): y allows, n denies,
+    // no Enter needed — typing the full word "allow" was unfriendly. Other
+    // keys fall through to the editor, so the old allow/deny words still work
+    // via onSubmit (which defaults Enter/empty to deny).
+    if (approvalWaiter) {
+      const w = approvalWaiter;
+      if (data === "y" || data === "Y") {
+        approvalWaiter = null;
+        appendMessage("system", `✓ allowed ${w.toolName} (${w.reason})`);
+        w.resolve(true);
+        return { consume: true };
+      }
+      if (data === "n" || data === "N") {
+        approvalWaiter = null;
+        appendMessage("system", `✗ denied ${w.toolName} (${w.reason})`);
+        w.resolve(false);
+        return { consume: true };
+      }
     }
     // Esc = cancel the running turn (pi/Codex). Don't steal it while the
     // autocomplete menu is open — there the editor uses Esc to close the menu.

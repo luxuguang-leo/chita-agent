@@ -129,3 +129,15 @@ test("guardian: categoryLabel maps categories to Chinese labels", () => {
   expect(categoryLabel("weaken")).toBe("持久弱化");
   expect(categoryLabel("none")).toBe("");
 });
+
+test("guardian: ~/.chita/tmp/** is a narrow write allowlist for probe scripts (cur-xxx)", () => {
+  // probe scripts may be written to ~/.chita/tmp/** without tripping the
+  // out-of-workspace deny; everything else outside the workspace stays denied
+  // (the allowlist must NOT widen the destructive rules).
+  expect(classify("write", { path: "~/.chita/tmp/probe.ts", content: "x" }, CTX).category).toBe("none");
+  expect(classify("write", { path: "~/.chita/tmp/deep/nested/probe.ts", content: "x" }, CTX).category).toBe("none");
+  // sibling ~/.chita paths and generic /tmp are NOT allowlisted
+  expect(classify("write", { path: "~/.chita/.env", content: "x" }, CTX).category).toBe("destructive");
+  expect(classify("write", { path: "~/.chita/probe.ts", content: "x" }, CTX).category).toBe("destructive");
+  expect(classify("write", { path: "/tmp/probe.ts", content: "x" }, CTX).category).toBe("destructive");
+});

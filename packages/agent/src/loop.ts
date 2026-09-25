@@ -328,13 +328,18 @@ export class AgentLoop {
         try {
           for await (const ev of this.opts.provider.chat(this.messages, { signal: this.opts.signal, tools: chatTools })) {
             if (ev.kind === "message" && ev.message) {
-              // Streaming fragments: show via hook, accumulate into ONE
-              // conversation message (dedup — turn-end message carries full text)
-              this.opts.hooks?.onAssistantMessage?.(ev.message);
-              if (ev.message.toolCalls && ev.message.toolCalls.length > 0) {
-                // turn-end declaration: full assistant message with toolCalls
+              const hasToolCalls = ev.message.toolCalls && ev.message.toolCalls.length > 0;
+              if (hasToolCalls) {
+                // turn-end declaration: full assistant message with toolCalls.
+                // Its content was ALREADY streamed as deltas above, so do NOT
+                // re-emit it via onAssistantMessage — the TUI appends every
+                // hook payload to its buffer and would double the text (cur-xxx:
+                // duplicate turns in the session tape).
                 pendingAssistant = ev.message;
               } else if (ev.message.content) {
+                // streaming fragment: show via hook, accumulate into ONE
+                // conversation message (dedup — turn-end carries full text)
+                this.opts.hooks?.onAssistantMessage?.(ev.message);
                 if (!pendingAssistant) pendingAssistant = { ...ev.message };
                 else {
                   const acc: ChatMessage = pendingAssistant;

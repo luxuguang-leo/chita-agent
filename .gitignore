@@ -12,3 +12,6 @@ evals/cases/*/env/.git/
 evals/cases/*/env/answer.json
 .hermes-agent-bridge
 agent-bridge
+
+# chita runtime memory (agent-maintained cross-session state, repo-root local only)
+.chita/

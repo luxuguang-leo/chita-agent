@@ -76,6 +76,18 @@ function isOutsideWorkspace(path: string, cwd: string): boolean {
   return !(abs === normCwd || abs.startsWith(normCwd + "/"));
 }
 
+/** `~/.chita/tmp/**` — narrow allowlist so probe scripts can be written outside
+ *  the workspace without tripping the out-of-workspace deny (cur-xxx). Applies
+ *  to the write TOOL's path arg only; bash redirect/tee to absolute paths stays
+ *  denied (design review: do NOT widen the destructive rules). */
+function isChitaTmpPath(path: string, cwd: string): boolean {
+  const home = process.env.HOME ?? "";
+  const tmpDir = resolve(home, ".chita/tmp");
+  const expanded = path.startsWith("~") ? path.replace(/^~/, home) : path;
+  const abs = resolve(cwd, expanded);
+  return abs === tmpDir || abs.startsWith(tmpDir + "/");
+}
+
 /* ------------------------------------------------------------------ *
  * Credential probing: reads of secret-bearing paths
  * ------------------------------------------------------------------ */
@@ -130,7 +142,7 @@ export function classify(tool: string, args: Record<string, unknown>, ctx: Guard
     }
   }
   // write outside the workspace (destructive by scope, not by force flag)
-  if ((tool === "write" || tool === "bash") && path && isOutsideWorkspace(path, cwd)) {
+  if ((tool === "write" || tool === "bash") && path && isOutsideWorkspace(path, cwd) && !isChitaTmpPath(path, cwd)) {
     return deny(`guardian[destructive]: writing outside workspace root (${path})`, "destructive");
   }
   // F2: absolute-path stdout redirect, but NOT fd sinks (2>/dev/null,
