@@ -283,6 +283,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   /** recon 读操作：成功时静默（不追加结果行），只保留运行瞬间的 spinner。
    *  read/ls/grep/glob 在 recon 时刷屏是 tool 噪音的主要来源（用户反馈）。 */
   const EXPLORATORY_TOOLS = new Set(["read", "ls", "grep", "glob"]);
+  /** 连续同类成功 tool 折叠（cursor her-004 预告）：agent 连跑 8 条
+   *  `cd … && …` 时折成 `bash ×8 · cd …`。失败或 assistant 文本打断折叠。 */
+  let lastToolGroup: { name: string; count: number; text: string; row: Markdown } | null = null;
   let bannerCount = 0; // consecutive decorative echo banners (folded)
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
@@ -393,6 +396,28 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     }
   }
 
+  /** 内联 tool 行 + 连续同类折叠（design-tui-inline-tools.md）：
+   *  - 失败：✗ 开头 bright，单独落行，打断折叠
+   *  - 同类连续成功：折成 `name ×N · text ✓`（更新上一行）
+   *  - 异类成功：新行 dim
+   *  text 是「命令预览 + 耗时」，不含 ✓/✗。 */
+  function appendToolRow(name: string, text: string, failed: boolean): void {
+    if (failed) {
+      const row = new Markdown(`✗ ${text}`, 0, 0, mdTheme, { color: brightWhite });
+      messagesBox.addChild(row);
+      lastToolGroup = null;
+    } else if (lastToolGroup && lastToolGroup.name === name) {
+      lastToolGroup.count++;
+      lastToolGroup.row.setText(`${name} ×${lastToolGroup.count} · ${lastToolGroup.text} ✓`);
+    } else {
+      const row = new Markdown(`${text} ✓`, 0, 0, mdTheme, { color: dim });
+      messagesBox.addChild(row);
+      lastToolGroup = { name, count: 1, text, row };
+    }
+    trimMessages();
+    tui.requestRender();
+  }
+
   function appendMessage(role: string, content: string): void {
     if (role === "tool") {
       // 内联 tool 脚注：无 role 前缀，成功 dim、失败（✗ 开头）bright 醒目
@@ -438,6 +463,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   /** Streaming: accumulate into one row, update in place (cur-033 #3 refinement) */
   function appendStreamed(content: string): void {
     streamingBuffer += content;
+    // assistant 文本打断 tool 折叠（下一次 tool 从新行开始）
+    lastToolGroup = null;
     if (!streamingText) {
       // 首 token 出来：移除活动占位行（thinking spinner），换成真实流式文本
       if (activityLine) {
@@ -819,7 +846,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             toolStartTs.delete(ev.callId ?? ev.toolName);
             const took = startTs !== undefined ? ` (${((Date.now() - startTs) / 1000).toFixed(1)}s)` : "";
             const isBanner = ev.ok && isBannerCmd(cmd);
-            let detail = "";
             if (isBanner) {
               // decorative `echo "==="` banners: fold consecutive ones into
               // a single line instead of flooding (Leo: 5× echo "===…)
@@ -833,10 +859,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               // 失败仍显示（失败重要，可能卡死循环）。
               const quiet = ev.ok && EXPLORATORY_TOOLS.has(ev.toolName);
               if (!quiet) {
-                detail = ev.ok
-                  ? `${toolLine(cmd, ev.toolName, ev.output ?? "")}${took} ✓`
-                  : `✗ ${cmdPreview(briefCmd(cmd)) || ev.toolName} — ${ev.error?.slice(0, 80) ?? "unknown"}${took}`;
-                appendMessage("tool", detail);
+                if (ev.ok) {
+                  appendToolRow(ev.toolName, `${toolLine(cmd, ev.toolName, ev.output ?? "")}${took}`, false);
+                } else {
+                  appendToolRow(ev.toolName, `${cmdPreview(briefCmd(cmd)) || ev.toolName} — ${ev.error?.slice(0, 80) ?? "unknown"}${took}`, true);
+                }
               }
             }
             // remember full result for /tool expansion (cur-042)
