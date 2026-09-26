@@ -370,7 +370,9 @@ export class AgentLoop {
                 role: "tool",
                 name: ev.toolName,
                 toolCallId: ev.callId,
-                content: result.ok ? (result.output ?? "") : `ERROR: ${result.error ?? ""}`,
+                content: result.ok
+                  ? (result.output ?? "")
+                  : `ERROR: ${result.error ?? ""}${result.output ? `\n${result.output}` : ""}`,
               });
               // done tool hard gate (v2.1 §2.2): a SUCCESSFUL done tool call
               // transitions to DONE — regardless of Provider event kind.

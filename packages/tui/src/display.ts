@@ -63,3 +63,35 @@ export function tailWindow(current: string, chunk: string, maxLines: number, max
   }
   return buf;
 }
+
+/** Strip redirection/noise from a command for the tool line. 'ls -la ~/.agents
+ *  2>/dev/null; echo ---' -> 'ls -la ~/.agents'. Full command stays in /tool. */
+export function briefCmd(cmd: string): string {
+  const cleaned = cmd
+    .replace(/\s*2>\s*\/dev\/null/g, "")
+    .replace(/\s*>\s*\/dev\/null/g, "")
+    .replace(/\s*\|\s*head(\s+-\d+)?.*$/, "")
+    .replace(/;\s*echo\s+["'-]+.*$/, "")
+    .trim();
+  if (cleaned.length <= 80) return cleaned;
+  return cleaned.slice(0, 80) + "…";
+}
+
+/** 命令预览（混合策略，cursor Finding #2）：复合命令（&&/||/;）显示第一段
+ *  + …N more（正对 `pwd && ls` 误导）；单条长命令头 60% + 尾 40%。引号内
+ *  分隔符不单独处理（MVP 朴素扫描，失败则退回 head/tail 也足够）。 */
+export function cmdPreview(cmd: string): string {
+  const MAX = 42;
+  const segs = cmd.split(/\s*&&\s*|\s*\|\|\s*|;\s*/).filter((s) => s.trim());
+  if (segs.length > 1) {
+    const first = segs[0]!.trim();
+    const head = first.length > MAX ? first.slice(0, MAX) + "…" : first;
+    return `${head} …${segs.length - 1} more`;
+  }
+  if (cmd.length > MAX) {
+    const headLen = Math.floor(MAX * 0.6);
+    const tailLen = MAX - headLen - 1; // -1 留给 …
+    return `${cmd.slice(0, headLen)}…${cmd.slice(-tailLen)}`;
+  }
+  return cmd;
+}

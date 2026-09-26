@@ -48,7 +48,7 @@ import type { TraceEvent } from "../../session/src/trace.ts";
 import { estimateTokens } from "../../agent/src/context.ts";
 import { historyFromEvents } from "../../agent/src/history.ts";
 import { mergeQueuedIntoDraft } from "./queue.ts";
-import { isBannerCmd, formatApprovalCommand, tailWindow } from "./display.ts";
+import { isBannerCmd, formatApprovalCommand, tailWindow, briefCmd, cmdPreview } from "./display.ts";
 import { visibleWidth, wrapTextWithAnsi } from "../vendor/utils.ts";
 import type { Component } from "../vendor/tui.ts";
 
@@ -281,6 +281,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   // last tool results per name (for /tool <name> full expansion, cur-042)
   const toolResults = new Map<string, { ok: boolean; output?: string; error?: string }>();
   const lastToolCmd = new Map<string, string>(); // callId -> command (omp-style pairing)
+  const toolStartTs = new Map<string, number>(); // callId -> start ts（✓/✗ 耗时）
   let bannerCount = 0; // consecutive decorative echo banners (folded)
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
@@ -712,17 +713,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
    *  'ls -la ~/.agents'. The old 2-word cut ('sed -n 1,60p file' -> 'sed -n…')
    *  lost the target and made the running-tool row useless (cur-xxx: "卡住
    *  不知道在干啥"). Full command stays in /tool. */
-  function briefCmd(cmd: string): string {
-    const cleaned = cmd
-      .replace(/\s*2>\s*\/dev\/null/g, "")
-      .replace(/\s*>\s*\/dev\/null/g, "")
-      .replace(/\s*\|\s*head(\s+-\d+)?.*$/, "")
-      .replace(/;\s*echo\s+["'-]+.*$/, "")
-      .trim();
-    if (cleaned.length <= 80) return cleaned;
-    return cleaned.slice(0, 80) + "…";
-  }
-
   /** Condensed tool summary for the message area (omp/hermes style): skip
    *  decoration-only lines (===, ---, ***, ...), extract "=== TITLE ==="
    *  markers, append line count when the output is long. Full output stays
@@ -751,13 +741,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
    *  /tool. (Leo: bare first word ('curl') lost the target.) */
   function toolLine(cmd: string, toolName: string, output: string): string {
     if (cmd) {
-      const cleaned = briefCmd(cmd); // noise-stripped
-      const words = cleaned.split(/\s+/).filter(Boolean);
-      const arg = words.slice(1).find((w) => !w.startsWith("-") && !w.startsWith("<"));
-      const display = arg ? `${words[0] ?? toolName} ${arg}` : (words[0] ?? toolName);
-      const short = display.length > 42 ? display.slice(0, 42) + "…" : display;
+      const display = cmdPreview(briefCmd(cmd)); // 复合命令分段 / 单长命令头尾
       const n = output.trim() ? output.trim().split("\n").length : 0;
-      return n > 3 ? `${short} · ${n} lines` : short;
+      return n > 3 ? `${display} · ${n} lines` : display;
     }
     return toolSummary(toolName, output);
   }
@@ -770,6 +756,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               : typeof a.pattern === "string" ? a.pattern
               : "";
             lastToolCmd.set(ev.callId ?? ev.tool?.name ?? "", cmd);
+            toolStartTs.set(ev.callId ?? ev.tool?.name ?? "", Date.now());
             // persist the declaration so resume can pair results with calls —
             // without it a tape keeps tool results but no toolCalls (cur-109)
             tapeAppend({ type: "tool_call", tool: ev.tool, callId: ev.callId });
@@ -806,6 +793,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             // Success -> condensed summary (decorations skipped, titles
             // extracted, long output annotated); failure -> error detail.
             const cmd = lastToolCmd.get(ev.callId ?? ev.toolName) ?? "";
+            const startTs = toolStartTs.get(ev.callId ?? ev.toolName);
+            toolStartTs.delete(ev.callId ?? ev.toolName);
+            const took = startTs !== undefined ? ` (${((Date.now() - startTs) / 1000).toFixed(1)}s)` : "";
             const isBanner = ev.ok && isBannerCmd(cmd);
             let detail = "";
             if (isBanner) {
@@ -818,8 +808,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
                 bannerCount = 0;
               }
               detail = ev.ok
-                ? toolLine(cmd, ev.toolName, ev.output ?? "")
-                : `error: ${ev.error?.slice(0, 80) ?? "unknown"}`;
+                ? `${toolLine(cmd, ev.toolName, ev.output ?? "")}${took} ✓`
+                : `✗ ${ev.error?.slice(0, 80) ?? "unknown"}${took}`;
               appendMessage("tool", `[${ev.toolName}] ${detail}`);
             }
             // remember full result for /tool expansion (cur-042)

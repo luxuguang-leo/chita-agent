@@ -242,8 +242,20 @@ function bashShape(timeoutMs: number): ExitShape {
       };
     }
     if (r.code !== 0) {
-      const detail = truncateOutput(r.stdout + r.stderr || "command failed");
-      return { ok: false, error: detail.output, truncated: detail.truncated, verificationHint: "command exited non-zero — inspect the output above" };
+      // 分离 stdout/stderr（cursor Finding #1）：error 只放 stderr（无 stderr
+      // 则 exit code），stdout 单独放 output。loop 会拼给模型，TUI 则分字段
+      // 干净显示——否则 ls/pytest 把关键信息打在 stdout 时会被当 error 刷屏。
+      const errDetail = r.stderr.trim()
+        ? truncateOutput(r.stderr)
+        : { output: `command exited with code ${r.code}`, truncated: false };
+      const outDetail = truncateOutput(r.stdout);
+      return {
+        ok: false,
+        output: outDetail.output || undefined,
+        truncated: errDetail.truncated || outDetail.truncated,
+        error: errDetail.output,
+        verificationHint: "command exited non-zero — inspect the output above",
+      };
     }
     const out = truncateOutput(r.stdout);
     return { ok: true, output: out.output, truncated: out.truncated };

@@ -7,7 +7,7 @@
  */
 
 import { test, expect } from "bun:test";
-import { isBannerCmd, formatApprovalCommand, sanitizeTail, tailWindow } from "./display.ts";
+import { isBannerCmd, formatApprovalCommand, sanitizeTail, tailWindow, briefCmd, cmdPreview } from "./display.ts";
 
 test("isBannerCmd: folds a pure decorative echo", () => {
   expect(isBannerCmd('echo "=== title ==="')).toBe(true);
@@ -106,4 +106,24 @@ test("tailWindow: char cap starts the tail on a line boundary", () => {
   expect(buf[0]).not.toBe("\n");
   // every surviving line is intact (no mid-line fragment from the char cut)
   for (const l of buf.split("\n").filter(Boolean)) expect(l).toBe("0123456789");
+});
+
+test("cmdPreview: compound command shows first segment + …N more (not bare first word)", () => {
+  expect(cmdPreview("pwd && ls -la ~")).toBe("pwd …1 more");
+  expect(cmdPreview("cd /x && git status && git diff")).toBe("cd /x …2 more");
+});
+
+test("cmdPreview: short command passes through unchanged", () => {
+  expect(cmdPreview("pwd")).toBe("pwd");
+  expect(cmdPreview("ls -la")).toBe("ls -la");
+});
+
+test("cmdPreview: single long command keeps head 60% + tail 40%", () => {
+  const out = cmdPreview("curl -s https://api.example.com/v1/very/long/path/that/exceeds/the/limit");
+  expect(out.length).toBeLessThanOrEqual(42);
+  expect(out).toContain("…");
+});
+
+test("briefCmd: strips redirection and trailing echo banners", () => {
+  expect(briefCmd("ls -la ~/.agents 2>/dev/null; echo ---")).toBe("ls -la ~/.agents");
 });

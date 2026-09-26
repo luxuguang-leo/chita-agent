@@ -317,3 +317,18 @@ test("shellToolShape: abort mid-run returns interrupted", async () => {
   expect(result.ok).toBe(false);
   expect(result.error).toBe("interrupted");
 });
+
+test("bash failure: error holds only stderr, stdout goes to output (stdout/stderr 分离)", async () => {
+  const registry = makeRegistry();
+  const r = await registry.execute(
+    "bash",
+    { command: "echo stdout-content; echo stderr-content >&2; exit 1" },
+    { cwd: "/tmp", permission: "allow" }
+  );
+  expect(r.ok).toBe(false);
+  // error 只放 stderr，不再把 stdout 混进来（ls 输出被当 error 刷屏的根因）
+  expect(r.error).toContain("stderr-content");
+  expect(r.error).not.toContain("stdout-content");
+  // stdout 单独放 output，loop 会拼给模型
+  expect(r.output).toContain("stdout-content");
+});
