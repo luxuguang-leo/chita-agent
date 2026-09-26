@@ -908,9 +908,17 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // record non-slash task prompts in editor history (↑↓ navigation)
     if (!value.startsWith("/")) input.addToHistory(value);
     if (running) {
-      // FIFO queue: normal turn end drains it; Esc/Ctrl+C return it to the
-      // editor instead (pi/Codex). Never drop input.
-      pendingInputs.push(value);
+      // steering（不是 FIFO 排队）：agent 跑着时用户再输入，应该中途转向——
+      // loop.steer 在下一轮迭代边界注入 [steer] 系统消息，让模型看到「用户
+      // 中途说：给方案」。之前只排队，用户「接着输入让他给方案」不会转向。
+      const st = loop?.state ?? "IDLE";
+      if (st === "DONE" || st === "CANCELLED" || st === "ERROR") {
+        // turn 已结束但 running 标志还没清：直接作为新 turn
+        await handleTurn(value);
+      } else {
+        loop?.steer(value);
+        appendMessage("system", `⏎ steering → ${value}`);
+      }
       return;
     }
     await handleTurn(value);
