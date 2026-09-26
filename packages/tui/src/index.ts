@@ -288,6 +288,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   let bannerCount = 0; // consecutive decorative echo banners (folded)
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
+  /** 消息流里的动态活动占位行（thinking/running…）：模型思考或工具执行时，
+   *  消息流不再静止——用户反馈「少了实时滚动，以为卡住」。首 token 出来后移除。 */
+  let activityLine: Markdown | null = null;
   let streamingBuffer = "";
   /** True once the provider emitted any message THIS turn (cur-056): guards
    *  endStreaming from re-appending a stale assistant message + unchanged
@@ -449,6 +452,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   function appendStreamed(content: string): void {
     streamingBuffer += content;
     if (!streamingText) {
+      // 首 token 出来：移除活动占位行（thinking spinner），换成真实流式文本
+      if (activityLine) {
+        if (messagesBox.children.includes(activityLine)) messagesBox.removeChild(activityLine);
+        activityLine = null;
+      }
       streamingText = new Markdown(`**assistant** ${streamingBuffer}`, 0, 0, mdTheme, { color: brightWhite });
       messagesBox.addChild(streamingText);
     } else {
@@ -566,6 +574,19 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const elapsed = Math.max(0, Math.floor((Date.now() - spinnerStart) / 1000));
     const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
     setStatus(` | ${frame} ${spinnerLabel} (${elapsed}s)`);
+    // 消息流里的活动占位行：模型思考（首 token 前）或工具执行时，在消息流底部
+    // 显示动态 spinner，否则用户看到静止界面会以为卡住（cur-xxx）。
+    if (!streamingText) {
+      const label = spinnerLabel || "thinking";
+      const text = `${frame} ${label} (${elapsed}s)`;
+      if (!activityLine) {
+        activityLine = new Markdown(text, 0, 0, mdTheme, { color: dim });
+        messagesBox.addChild(activityLine);
+      } else {
+        activityLine.setText(text);
+      }
+      trimMessages();
+    }
     if (runningToolLine) {
       // P1 streaming: rebuild the row as `[name] ⠋ cmd` + the live tail so the
       // 120ms spinner tick doesn't overwrite streamed stdout (finding #2)
@@ -607,6 +628,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     runningTailBuf = "";
     spinnerLabel = "";
     spinnerTrackState = true;
+    if (activityLine) {
+      if (messagesBox.children.includes(activityLine)) messagesBox.removeChild(activityLine);
+      activityLine = null;
+    }
     tui.requestRender();
   }
 
