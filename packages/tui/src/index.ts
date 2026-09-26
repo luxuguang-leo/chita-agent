@@ -563,7 +563,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     setStatus(` | ${frame} ${spinnerLabel} (${elapsed}s)`);
     // 消息流里的活动占位行：模型思考（首 token 前）或读结果时，在消息流底部
     // 显示动态 spinner，否则用户看到静止界面会以为卡住（cur-xxx）。TOOL_CALL
-    // 时 runningToolLine 已在工具条显示，跳过以避免重复（cursor Finding #1）。
+    // 时 runningToolLine 已在消息流显示，跳过以避免重复（cursor Finding #1）。
     if (!streamingText && !runningToolLine) {
       const label = spinnerLabel || "thinking";
       const text = `${frame} ${label} (${elapsed}s)`;
@@ -779,6 +779,12 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             // running-tool indicator row (cur-058): spins with the status bar
             // until the tool_result arrives and replaces it
             if (!runningToolLine) {
+              // 移除残留的 thinking/reading 占位行（cursor Finding #1）：否则
+              // TOOL_CALL 时消息流会同时出现 activityLine + running 两行。
+              if (activityLine) {
+                if (messagesBox.children.includes(activityLine)) messagesBox.removeChild(activityLine);
+                activityLine = null;
+              }
               runningToolCmd = briefCmd(cmd) || ev.tool?.name || "tool";
               runningToolName = ev.tool?.name ?? "tool";
               runningToolLine = new Markdown(`[${runningToolName}] ⠋ ${runningToolCmd}`, 0, 0, mdTheme, { color: brightWhite });
