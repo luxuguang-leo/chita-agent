@@ -911,10 +911,16 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       // steering（不是 FIFO 排队）：agent 跑着时用户再输入，应该中途转向——
       // loop.steer 在下一轮迭代边界注入 [steer] 系统消息，让模型看到「用户
       // 中途说：给方案」。之前只排队，用户「接着输入让他给方案」不会转向。
+      if (value.startsWith("/")) {
+        appendMessage("system", "⏳ turn 运行中，斜杠命令请等结束后再发");
+        return;
+      }
       const st = loop?.state ?? "IDLE";
       if (st === "DONE" || st === "CANCELLED" || st === "ERROR") {
-        // turn 已结束但 running 标志还没清：直接作为新 turn
-        await handleTurn(value);
+        // turn 已结束但 running 标志还没清：入队，外层 finally 会 drain——
+        // 不要嵌套 handleTurn（cursor Finding #1：会和外层 finally 的
+        // running=false 竞态）。
+        pendingInputs.push(value);
       } else {
         loop?.steer(value);
         appendMessage("system", `⏎ steering → ${value}`);
