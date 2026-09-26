@@ -9,7 +9,7 @@
 import { test, expect } from "bun:test";
 import { ToolRegistry } from "./index.ts";
 import { registerBuiltinTools, gitTool, tokenizeArgs, spawnToResult, shellToolShape } from "./builtin.ts";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -19,6 +19,22 @@ function makeRegistry(): ToolRegistry {
   registerBuiltinTools(r);
   return r;
 }
+
+test("write tool: absolute path is NOT nested under cwd (join→resolve fix)", async () => {
+  const registry = makeRegistry();
+  const repo = mkdtempSync(join(tmpdir(), "chita-write-abs-"));
+  const absFile = join(repo, "docs", "out.md");
+  const r = await registry.execute(
+    "write",
+    { path: absFile, content: "hello" },
+    { cwd: repo, permission: "allow" }
+  );
+  expect(r.ok).toBe(true);
+  // written at the absolute path itself, not nested under cwd
+  expect(existsSync(absFile)).toBe(true);
+  expect(existsSync(join(repo, absFile))).toBe(false); // the old join() bug target
+  rmSync(repo, { recursive: true, force: true });
+});
 
 test("git tool rejects shell metacharacters", async () => {
   const registry = makeRegistry();

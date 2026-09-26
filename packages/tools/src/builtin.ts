@@ -5,9 +5,9 @@
  * git: read-only (status/diff/log) per decision #5; web lands M2.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join, dirname } from "node:path";
+import { resolve, dirname } from "node:path";
 import { Tool, ToolContext, ToolResult, truncateOutput } from "./index.ts";
 import { sanitizeTail } from "./sanitize.ts";
 
@@ -16,11 +16,15 @@ export const readTool: Tool = {
   description: "Read a file (UTF-8).",
   parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
   defaultPermission: "allow",
-  execute(args, ctx: ToolContext): ToolResult {
+  execute: async (args, ctx: ToolContext): Promise<ToolResult> => {
     const path = String(args.path ?? "");
     if (!path) return { ok: false, error: "path required" };
     try {
-      const content = readFileSync(join(ctx.cwd, path), "utf-8");
+      // async read (cur-xxx): readFileSync blocked the event loop — a large
+      // or iCloud-not-yet-downloaded file froze the spinner / TUI.
+      // resolve (NOT join): join('/cwd', '/abs/path') → '/cwd/abs/path' (nested
+      // garbage dirs); resolve keeps the absolute path as-is.
+      const content = await readFile(resolve(ctx.cwd, path), "utf-8");
       const { output, truncated } = truncateOutput(content);
       return { ok: true, output, truncated };
     } catch (e) {
@@ -38,14 +42,16 @@ export const writeTool: Tool = {
     required: ["path", "content"],
   },
   defaultPermission: "ask",
-  execute(args, ctx: ToolContext): ToolResult {
+  execute: async (args, ctx: ToolContext): Promise<ToolResult> => {
     const path = String(args.path ?? "");
     const content = String(args.content ?? "");
     if (!path) return { ok: false, error: "path required" };
     try {
-      const full = join(ctx.cwd, path);
-      mkdirSync(dirname(full), { recursive: true });
-      writeFileSync(full, content);
+      // resolve (NOT join): an absolute path must not be nested under cwd
+      // (join('/cwd','/abs') → '/cwd/abs' — wrote into Users/luxuguang/... )
+      const full = resolve(ctx.cwd, path);
+      await mkdir(dirname(full), { recursive: true });
+      await writeFile(full, content);
       return { ok: true, output: `wrote ${path} (${content.length} bytes)` };
     } catch (e) {
       return { ok: false, error: String(e) };
