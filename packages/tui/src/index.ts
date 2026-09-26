@@ -282,6 +282,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const toolResults = new Map<string, { ok: boolean; output?: string; error?: string }>();
   const lastToolCmd = new Map<string, string>(); // callId -> command (omp-style pairing)
   const toolStartTs = new Map<string, number>(); // callId -> start ts（✓/✗ 耗时）
+  /** recon 读操作：成功时静默（不追加结果行），只保留运行瞬间的 spinner。
+   *  read/ls/grep/glob 在 recon 时刷屏是 tool 噪音的主要来源（用户反馈）。 */
+  const EXPLORATORY_TOOLS = new Set(["read", "ls", "grep", "glob"]);
   let bannerCount = 0; // consecutive decorative echo banners (folded)
   /** Pending assistant message being streamed (updated in place, not new rows) */
   let streamingText: Markdown | null = null;
@@ -807,10 +810,15 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
                 appendMessage("tool", `[bash] ×${bannerCount} banner lines`);
                 bannerCount = 0;
               }
-              detail = ev.ok
-                ? `${toolLine(cmd, ev.toolName, ev.output ?? "")}${took} ✓`
-                : `✗ ${cmdPreview(briefCmd(cmd)) || ev.toolName} — ${ev.error?.slice(0, 80) ?? "unknown"}${took}`;
-              appendMessage("tool", `[${ev.toolName}] ${detail}`);
+              // 探索类工具成功时静默：recon 的 read/ls 刷屏是主要噪音源。
+              // 失败仍显示（失败重要，可能卡死循环）。
+              const quiet = ev.ok && EXPLORATORY_TOOLS.has(ev.toolName);
+              if (!quiet) {
+                detail = ev.ok
+                  ? `${toolLine(cmd, ev.toolName, ev.output ?? "")}${took} ✓`
+                  : `✗ ${cmdPreview(briefCmd(cmd)) || ev.toolName} — ${ev.error?.slice(0, 80) ?? "unknown"}${took}`;
+                appendMessage("tool", `[${ev.toolName}] ${detail}`);
+              }
             }
             // remember full result for /tool expansion (cur-042)
             toolResults.set(ev.toolName, { ok: ev.ok, output: ev.output, error: ev.error });
