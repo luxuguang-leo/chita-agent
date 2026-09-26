@@ -1180,6 +1180,15 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   /** Abort the running turn and deny a pending approval. Shared by Ctrl+C and
    *  Esc so both cancel identically; the queue is returned to the editor by
    *  handleTurn's finally. Returns false when nothing is cancellable. */
+  /** 拒绝当前授权弹窗（只 deny，不取消回合）。Esc 用它，与面板选项「拒绝」
+   *  语义一致（cursor Finding #1：Esc 不该 abort 整个 turn）。Ctrl+C 仍走
+   *  cancelTurn（deny + 取消回合）。 */
+  const denyApproval = (): void => {
+    if (!approvalWaiter) return;
+    const w = approvalWaiter;
+    approvalWaiter = null;
+    w.resolve(false); // finish() 里会 overlay.hide() + resolve(false)
+  };
   const cancelTurn = (): boolean => {
     if (!running || !cancelCurrent) return false;
     // M-next WAITING_USER: cancel also resolves a pending approval as deny —
@@ -1220,8 +1229,11 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     }
     // Esc = cancel the running turn (pi/Codex). Don't steal it while the
     // autocomplete menu is open — there the editor uses Esc to close the menu.
+    // While an approval overlay is up, Esc only DENIES (does not abort the
+    // turn) — matches the panel's "Esc 拒绝" label (cursor Finding #1).
     if (running && cancelCurrent && !input.isShowingAutocomplete() && matchesKey(data, "escape")) {
-      cancelTurn();
+      if (approvalWaiter) denyApproval();
+      else cancelTurn();
       return { consume: true };
     }
     // Alt+Up = take back the queue without cancelling (Codex edit_queued_message)

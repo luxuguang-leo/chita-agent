@@ -9,7 +9,7 @@
 import { test, expect } from "bun:test";
 import { ToolRegistry } from "./index.ts";
 import { registerBuiltinTools, gitTool, tokenizeArgs, spawnToResult, shellToolShape } from "./builtin.ts";
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -30,9 +30,10 @@ test("write tool: absolute path is NOT nested under cwd (join→resolve fix)", a
     { cwd: repo, permission: "allow" }
   );
   expect(r.ok).toBe(true);
-  // written at the absolute path itself, not nested under cwd
-  expect(existsSync(absFile)).toBe(true);
-  expect(existsSync(join(repo, absFile))).toBe(false); // the old join() bug target
+  // 内容真的写到了绝对路径本身（不是嵌套在 cwd 下）
+  expect(readFileSync(absFile, "utf-8")).toBe("hello");
+  // 没有嵌套的 Users/... 假路径（旧 join() bug 的产物）
+  expect(existsSync(join(repo, "Users"))).toBe(false);
   rmSync(repo, { recursive: true, force: true });
 });
 
