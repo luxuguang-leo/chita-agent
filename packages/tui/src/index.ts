@@ -406,7 +406,13 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
       const row = new Markdown(`✗ ${text}`, 0, 0, mdTheme, { color: brightWhite });
       messagesBox.addChild(row);
       lastToolGroup = null;
-    } else if (lastToolGroup && lastToolGroup.name === name) {
+    } else if (
+      lastToolGroup &&
+      lastToolGroup.name === name &&
+      // 仅当折叠行仍是消息流最后一行时才继续折（cursor Finding #1）：否则
+      // 中间插入了 activityLine/running/assistant/banner 后，折「跨过占位」会怪。
+      messagesBox.children[messagesBox.children.length - 1] === lastToolGroup.row
+    ) {
       lastToolGroup.count++;
       lastToolGroup.row.setText(`${name} ×${lastToolGroup.count} · ${lastToolGroup.text} ✓`);
     } else {
