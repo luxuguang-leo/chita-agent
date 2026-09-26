@@ -160,10 +160,9 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   const messagesBox = new Box();
   const messageScroll = new ScrollView(messagesBox, { follow: "end" });
 
-  // Tool activity region: fixed-height scrollable strip below the chat —
-  // tool calls no longer flood the conversation (Leo: wants scrolling).
-  const toolBox = new Box();
-  const toolScroll = new ScrollView(toolBox, { follow: "end" });
+  // tool 行内联到消息流（design-tui-inline-tools.md）：assistant 主叙事 +
+  // tool dim 脚注交错滚动，单一 ScrollView，不再拆独立 strip（之前拆出去
+  // 导致「双叙事线」割裂，用户觉得少了实时滚动/像卡住）。
 
   // Editor with slash-command + @file autocomplete (T2)
   const id = (s: string) => s;
@@ -196,7 +195,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
 
   const root = new VStack([
     { component: messageScroll, grow: 1 },
-    { component: toolScroll, basis: 5, shrink: 0, grow: 0 }, // fixed 5 rows: input position stable (Leo)
     { component: input },
     { component: new HStack([{ component: statusText }]) },
   ]);
@@ -396,19 +394,18 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
   }
 
   function appendMessage(role: string, content: string): void {
-    const color = ROLE_COLOR[role] ?? ((s: string) => s);
-    // role prefix: color only (no ** bold — that would double-wrap via
-    // theme.bold around the ANSI codes, cur-040 minor)
     if (role === "tool") {
-      // tool activity -> dedicated scrolling strip, not the chat (Leo).
-      // dim（不是 brightWhite）：tool 行视觉退后，assistant 文本才是焦点
-      // （pi/omp 的 dimToolResults，hermes 的折叠 thinking 区同理）。
-      toolBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: dim }));
-      trimTools();
+      // 内联 tool 脚注：无 role 前缀，成功 dim、失败（✗ 开头）bright 醒目
+      // （design-tui-inline-tools.md：assistant 主叙事 + tool 脚注单一消息流）
+      const color = content.startsWith("✗") ? brightWhite : dim;
+      messagesBox.addChild(new Markdown(content, 0, 0, mdTheme, { color }));
     } else {
+      const color = ROLE_COLOR[role] ?? ((s: string) => s);
+      // role prefix: color only (no ** bold — that would double-wrap via
+      // theme.bold around the ANSI codes, cur-040 minor)
       messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
-      trimMessages();
     }
+    trimMessages();
     // requestRender() (NOT force): force resets the render state, which makes
     // TuiMainScreen emit a clearing full redraw (\x1b[2J\x1b[3J) of the whole
     // growing history — the "screen flooding" bug. Differential rendering is
@@ -424,16 +421,6 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const MAX_VISIBLE = 200;
     while (messagesBox.children.length > MAX_VISIBLE) {
       const oldest = messagesBox.children[0];
-      if (oldest) messagesBox.removeChild(oldest);
-    }
-  }
-
-  /** Window the tool strip: keep the last MAX_TOOL_LINES tool entries —
-   *  the strip is fixed-height and scrolls, so cap memory/render cost. */
-  function trimTools(): void {
-    const MAX_TOOL_LINES = 40;
-    while (toolBox.children.length > MAX_TOOL_LINES) {
-      const oldest = toolBox.children[0];
       if (oldest) {
         // defensive: if the running-tool row is the one being windowed out,
         // drop the reference so updateActivity can't touch a dead node (cur-058)
@@ -443,7 +430,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
           runningToolName = "";
           runningTailBuf = "";
         }
-        toolBox.removeChild(oldest);
+        messagesBox.removeChild(oldest);
       }
     }
   }
@@ -621,7 +608,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     }
     if (runningToolLine) {
       // turn ended before a tool_result — don't leave a stale spinning row
-      if (toolBox.children.includes(runningToolLine)) toolBox.removeChild(runningToolLine);
+      if (messagesBox.children.includes(runningToolLine)) messagesBox.removeChild(runningToolLine);
       runningToolLine = null;
       runningToolCmd = "";
       runningToolName = "";
@@ -795,8 +782,8 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               runningToolCmd = briefCmd(cmd) || ev.tool?.name || "tool";
               runningToolName = ev.tool?.name ?? "tool";
               runningToolLine = new Markdown(`[${runningToolName}] ⠋ ${runningToolCmd}`, 0, 0, mdTheme, { color: brightWhite });
-              toolBox.addChild(runningToolLine);
-              trimTools();
+              messagesBox.addChild(runningToolLine);
+              trimMessages();
               tui.requestRender();
             }
             return;
@@ -812,7 +799,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             }
             // the running indicator row is replaced by the result row (cur-058)
             if (runningToolLine) {
-              if (toolBox.children.includes(runningToolLine)) toolBox.removeChild(runningToolLine);
+              if (messagesBox.children.includes(runningToolLine)) messagesBox.removeChild(runningToolLine);
               runningToolLine = null;
               runningToolCmd = "";
               runningToolName = "";
@@ -833,7 +820,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               bannerCount++;
             } else {
               if (bannerCount > 0) {
-                appendMessage("tool", `[bash] ×${bannerCount} banner lines`);
+                appendMessage("tool", `bash ×${bannerCount} banner lines`);
                 bannerCount = 0;
               }
               // 探索类工具成功时静默：recon 的 read/ls 刷屏是主要噪音源。
@@ -843,7 +830,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
                 detail = ev.ok
                   ? `${toolLine(cmd, ev.toolName, ev.output ?? "")}${took} ✓`
                   : `✗ ${cmdPreview(briefCmd(cmd)) || ev.toolName} — ${ev.error?.slice(0, 80) ?? "unknown"}${took}`;
-                appendMessage("tool", `[${ev.toolName}] ${detail}`);
+                appendMessage("tool", detail);
               }
             }
             // remember full result for /tool expansion (cur-042)
@@ -929,7 +916,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
             appendMessage("system", `no recent result for ${name}`);
             return;
           }
-          appendMessage("tool", `[${name}] ${r.ok ? "ok" : "error"}\n${(r.output ?? r.error ?? "").slice(0, 2000)}`);
+          appendMessage("tool", `${r.ok ? name : "✗ " + name} ${r.ok ? "" : "error"}\n${(r.output ?? r.error ?? "").slice(0, 2000)}`);
           return;
         }
         case "/new":
