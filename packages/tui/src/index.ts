@@ -809,7 +809,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
               }
               detail = ev.ok
                 ? `${toolLine(cmd, ev.toolName, ev.output ?? "")}${took} ✓`
-                : `✗ ${ev.error?.slice(0, 80) ?? "unknown"}${took}`;
+                : `✗ ${cmdPreview(briefCmd(cmd)) || ev.toolName} — ${ev.error?.slice(0, 80) ?? "unknown"}${took}`;
               appendMessage("tool", `[${ev.toolName}] ${detail}`);
             }
             // remember full result for /tool expansion (cur-042)
