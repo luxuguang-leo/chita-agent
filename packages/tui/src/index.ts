@@ -397,8 +397,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     // role prefix: color only (no ** bold — that would double-wrap via
     // theme.bold around the ANSI codes, cur-040 minor)
     if (role === "tool") {
-      // tool activity -> dedicated scrolling strip, not the chat (Leo)
-      toolBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
+      // tool activity -> dedicated scrolling strip, not the chat (Leo).
+      // dim（不是 brightWhite）：tool 行视觉退后，assistant 文本才是焦点
+      // （pi/omp 的 dimToolResults，hermes 的折叠 thinking 区同理）。
+      toolBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: dim }));
       trimTools();
     } else {
       messagesBox.addChild(new Markdown(`${color(role)}: ${content}`, 0, 0, mdTheme, { color: brightWhite }));
@@ -744,9 +746,7 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
    *  /tool. (Leo: bare first word ('curl') lost the target.) */
   function toolLine(cmd: string, toolName: string, output: string): string {
     if (cmd) {
-      const display = cmdPreview(briefCmd(cmd)); // 复合命令分段 / 单长命令头尾
-      const n = output.trim() ? output.trim().split("\n").length : 0;
-      return n > 3 ? `${display} · ${n} lines` : display;
+      return cmdPreview(briefCmd(cmd)); // 复合命令分段 / 单长命令头尾（不报行数，行数是噪音）
     }
     return toolSummary(toolName, output);
   }
