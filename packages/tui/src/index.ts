@@ -574,9 +574,10 @@ export async function startTui(opts: TuiOptions = {}): Promise<void> {
     const elapsed = Math.max(0, Math.floor((Date.now() - spinnerStart) / 1000));
     const frame = SPINNER_FRAMES[spinnerFrame % SPINNER_FRAMES.length];
     setStatus(` | ${frame} ${spinnerLabel} (${elapsed}s)`);
-    // 消息流里的活动占位行：模型思考（首 token 前）或工具执行时，在消息流底部
-    // 显示动态 spinner，否则用户看到静止界面会以为卡住（cur-xxx）。
-    if (!streamingText) {
+    // 消息流里的活动占位行：模型思考（首 token 前）或读结果时，在消息流底部
+    // 显示动态 spinner，否则用户看到静止界面会以为卡住（cur-xxx）。TOOL_CALL
+    // 时 runningToolLine 已在工具条显示，跳过以避免重复（cursor Finding #1）。
+    if (!streamingText && !runningToolLine) {
       const label = spinnerLabel || "thinking";
       const text = `${frame} ${label} (${elapsed}s)`;
       if (!activityLine) {
